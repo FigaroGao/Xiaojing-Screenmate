@@ -1,5 +1,6 @@
 import hmac
 import json
+import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -59,12 +60,19 @@ def create_server(engine, host="127.0.0.1", port=17860):
                 elif self.path == "/v1/text":
                     engine.ingest_text(data)
                 elif self.path == "/v1/replies":
-                    engine.publish_reply(data["text"], data["observation_id"])
+                    engine.publish_reply(data["text"], data["observation_id"], data["session"], data["generation"])
                 else:
                     return self.send_json(404, {"error": "not_found"})
                 self.send_json(200, {"ok": True})
             except (ValueError, KeyError, TypeError):
                 self.send_json(400, {"error": "invalid_request"})
-    server = ThreadingHTTPServer((host, port), Handler)
+    class ExclusiveServer(ThreadingHTTPServer):
+        allow_reuse_address = False
+
+        def server_bind(self):
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            super().server_bind()
+    server = ExclusiveServer((host, port), Handler)
     server.daemon_threads = True
     return server

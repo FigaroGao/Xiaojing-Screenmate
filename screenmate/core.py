@@ -137,6 +137,9 @@ class Engine:
                     return
                 self.error = ""
                 if config["skip_unchanged"] and digest == self.last_hash:
+                    if self.observation:
+                        self.observation["captured_at"] = time.time()
+                        self.observed[self.sequence] = (generation, time.time())
                     return
                 self.sequence += 1
                 self.observation = dict(id=self.sequence, captured_at=time.time(), mode=config["mode"],
@@ -164,8 +167,10 @@ class Engine:
                 return None
             return dict(obs)
 
-    def publish_reply(self, text, observation_id):
+    def publish_reply(self, text, observation_id, session=None, generation=None):
         with self.lock:
+            if session is not None and (session != self.session or generation != self.generation):
+                raise ValueError("观看会话已经变化")
             observed = self.observed.get(observation_id)
             if not self.enabled or not observed or observed[0] != self.generation or time.time() - observed[1] > self.config["observation_ttl"]:
                 raise ValueError("画面已过期或观看已暂停，丢弃旧回复")

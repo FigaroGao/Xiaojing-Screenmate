@@ -52,6 +52,7 @@ python -m venv .venv
 ## 验证与边界
 
 ```powershell
+.\.venv\Scripts\python.exe -m pip install pytest -r integrations/astrbot_plugin_xiaojing_screenmate/requirements.txt
 .\.venv\Scripts\python.exe -m pytest -q
 ```
 

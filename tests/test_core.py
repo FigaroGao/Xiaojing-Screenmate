@@ -85,6 +85,16 @@ def test_stale_text_not_reused(engine):
     assert engine.error
 
 
+def test_unchanged_screen_refreshes_freshness_without_new_analysis(engine):
+    engine.set_enabled(True)
+    engine.sample()
+    engine.observation["captured_at"] -= 100
+    assert engine.latest() is None
+    engine.sample()
+    assert engine.sequence == 1
+    assert engine.latest() is not None
+
+
 def test_failure_invalidates_old_frame(engine):
     engine.set_enabled(True)
     engine.sample()
