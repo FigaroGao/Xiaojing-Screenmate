@@ -1,0 +1,1 @@
+{"manifest_version":3,"name":"小鲸 · 当前页陪看","version":"0.1.0","description":"将你主动开启的当前页可见文字发送到本机 Screenmate。","permissions":["activeTab","scripting","storage"],"host_permissions":["http://127.0.0.1:17860/*"],"background":{"service_worker":"background.js"},"action":{"default_popup":"popup.html"}}

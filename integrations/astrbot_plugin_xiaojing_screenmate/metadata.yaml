@@ -1,0 +1,6 @@
+name: astrbot_plugin_xiaojing_screenmate
+display_name: 小鲸桌面陪看
+desc: 连接 Screenmate，定期识读画面并将当前观察带入主人的私聊。
+version: v0.1.0
+author: FigaroGao
+repo: https://github.com/FigaroGao/Xiaojing-Screenmate

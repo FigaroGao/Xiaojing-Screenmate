@@ -1,0 +1,190 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import io
+import json
+import secrets
+import threading
+import time
+from pathlib import Path
+
+from PIL import ImageGrab
+
+DEFAULTS = dict(interval=15.0, mode="mixed", skip_unchanged=True,
+                monitor_bbox=None, text_ttl=45, observation_ttl=90,
+                voice_url="http://127.0.0.1:9880", voice_key="", voice_style="cute")
+
+
+class Engine:
+    def __init__(self, root: Path, capture=None):
+        self.root = root
+        root.mkdir(parents=True, exist_ok=True)
+        self.path = root / "settings.private.json"
+        self.config = dict(DEFAULTS)
+        if self.path.exists():
+            self.config.update(json.loads(self.path.read_text(encoding="utf-8")))
+        self.config.setdefault("token", secrets.token_urlsafe(32))
+        self.save()
+        self.lock = threading.RLock()
+        self.wake = threading.Event()
+        self.stop_event = threading.Event()
+        self.enabled = False
+        self.generation = 0
+        self.observation = None
+        self.text = None
+        self.reply = None
+        self.error = ""
+        self.last_hash = None
+        self.sequence = 0
+        self.session = secrets.token_hex(12)
+        self.observed = {}
+        self.capture = capture or self._capture
+        self.capture_guard = threading.Lock()
+
+    def save(self):
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.config, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(self.path)
+
+    def configure(self, values):
+        interval = float(values.get("interval", self.config["interval"]))
+        if not 1 <= interval <= 3600:
+            raise ValueError("观察间隔须在 1 至 3600 秒之间")
+        mode = values.get("mode", self.config["mode"])
+        if mode not in ("text", "vision", "mixed"):
+            raise ValueError("未知观察模式")
+        bbox = values.get("monitor_bbox", self.config["monitor_bbox"])
+        if bbox is not None:
+            if not isinstance(bbox, list) or len(bbox) != 4 or any(type(n) is not int for n in bbox):
+                raise ValueError("区域格式为 [左, 上, 右, 下]")
+            if bbox[2] <= bbox[0] or bbox[3] <= bbox[1]:
+                raise ValueError("区域宽高必须大于零")
+        with self.lock:
+            self.generation += 1
+            self.observation = None
+            self.observed.clear()
+            self.last_hash = None
+            self.config.update(interval=interval, mode=mode, monitor_bbox=bbox,
+                               skip_unchanged=bool(values.get("skip_unchanged", self.config["skip_unchanged"])))
+            for key in ("voice_url", "voice_key", "voice_style"):
+                if key in values:
+                    self.config[key] = str(values[key])
+            self.save()
+        self.wake.set()
+
+    def set_enabled(self, enabled):
+        with self.lock:
+            self.enabled = bool(enabled)
+            self.generation += 1
+            self.observation = None
+            self.observed.clear()
+            self.last_hash = None
+            self.text = None
+            self.error = ""
+        self.wake.set()
+
+    def ingest_text(self, data):
+        with self.lock:
+            if not self.enabled:
+                raise ValueError("观看已暂停")
+            self.text = dict(title=str(data.get("title", ""))[:500],
+                             url=str(data.get("url", ""))[:2000],
+                             text=str(data.get("text", ""))[:24000],
+                             received_at=time.time(), source="browser-visible-text")
+
+    @staticmethod
+    def _capture(bbox):
+        # Windows secure desktop / lock screen: do not serve an old frame.
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.OpenInputDesktop.restype = ctypes.c_void_p
+        desktop = user32.OpenInputDesktop(0, False, 0x0100)
+        if not desktop:
+            raise RuntimeError("无法访问当前桌面，可能已锁屏")
+        try:
+            if not user32.SwitchDesktop(ctypes.c_void_p(desktop)):
+                raise RuntimeError("桌面已锁定或不可见")
+        finally:
+            user32.CloseDesktop(ctypes.c_void_p(desktop))
+        return ImageGrab.grab(bbox=tuple(bbox) if bbox else None, all_screens=True)
+
+    def sample(self):
+        if not self.capture_guard.acquire(blocking=False):
+            return
+        try:
+            with self.lock:
+                if not self.enabled:
+                    return
+                generation, config = self.generation, dict(self.config)
+                text = dict(self.text) if self.text else None
+            if text and time.time() - text["received_at"] > config["text_ttl"]:
+                text = None
+            image = None
+            fingerprint = json.dumps(text and {k: v for k, v in text.items() if k != "received_at"}, sort_keys=True)
+            if config["mode"] != "text":
+                shot = self.capture(config["monitor_bbox"])
+                shot.thumbnail((1600, 1000))
+                out = io.BytesIO()
+                shot.convert("RGB").save(out, format="JPEG", quality=80)
+                image = base64.b64encode(out.getvalue()).decode()
+                fingerprint += hashlib.sha256(out.getvalue()).hexdigest()
+            elif text is None:
+                raise RuntimeError("等待浏览器发送可见文字；请连接扩展并开启当前页")
+            digest = hashlib.sha256(fingerprint.encode()).hexdigest()
+            with self.lock:
+                if not self.enabled or generation != self.generation:
+                    return
+                self.error = ""
+                if config["skip_unchanged"] and digest == self.last_hash:
+                    return
+                self.sequence += 1
+                self.observation = dict(id=self.sequence, captured_at=time.time(), mode=config["mode"],
+                                        session=self.session, generation=generation,
+                                        text=text if config["mode"] != "vision" else None,
+                                        image_base64=image, mime="image/jpeg" if image else None,
+                                        source="screenmate", region=config["monitor_bbox"])
+                self.last_hash = digest
+                self.observed[self.sequence] = (generation, time.time())
+                while len(self.observed) > 32:
+                    self.observed.pop(next(iter(self.observed)))
+        except Exception as exc:
+            with self.lock:
+                if generation == self.generation:
+                    self.error = str(exc)
+                    self.observation = None
+                    self.observed.clear()
+        finally:
+            self.capture_guard.release()
+
+    def latest(self):
+        with self.lock:
+            obs = self.observation
+            if not self.enabled or not obs or time.time() - obs["captured_at"] > self.config["observation_ttl"]:
+                return None
+            return dict(obs)
+
+    def publish_reply(self, text, observation_id):
+        with self.lock:
+            observed = self.observed.get(observation_id)
+            if not self.enabled or not observed or observed[0] != self.generation or time.time() - observed[1] > self.config["observation_ttl"]:
+                raise ValueError("画面已过期或观看已暂停，丢弃旧回复")
+            self.reply = dict(text=str(text)[:6000], observation_id=observation_id, at=time.time())
+
+    def status(self):
+        with self.lock:
+            return dict(enabled=self.enabled, interval=self.config["interval"], mode=self.config["mode"],
+                        skip_unchanged=self.config["skip_unchanged"], monitor_bbox=self.config["monitor_bbox"],
+                        error=self.error, sequence=self.sequence, reply=self.reply,
+                        has_observation=self.latest() is not None)
+
+    def run(self):
+        while not self.stop_event.is_set():
+            self.wake.clear()
+            self.sample()
+            self.wake.wait(self.config["interval"])
+
+    def close(self):
+        self.set_enabled(False)
+        self.stop_event.set()
+        self.wake.set()

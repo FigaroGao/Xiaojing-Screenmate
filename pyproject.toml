@@ -1,0 +1,9 @@
+[project]
+name = "xiaojing-screenmate"
+version = "0.1.0"
+description = "A desktop companion and continuous observation endpoint for Xiaojing"
+requires-python = ">=3.11"
+dependencies = ["Pillow>=10,<13", "requests>=2.32,<3", "PySide6==6.8.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

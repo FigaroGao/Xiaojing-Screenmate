@@ -1,0 +1,8 @@
+{
+ "enabled":{"description":"启用桌面连接","type":"bool","default":false},
+ "base_url":{"description":"电脑 Screenmate 地址（同机可用回环地址，平板需电脑局域网地址）","type":"string","default":"http://127.0.0.1:17860"},
+ "token":{"description":"电脑端配对码，请勿公开","type":"string","default":""},
+ "owner_id":{"description":"仅允许这个 QQ 用户的私聊获得屏幕内容","type":"string","default":""},
+ "vision_provider_id":{"description":"已在 AstrBot 配置的视觉模型提供商 ID；文字模式无需填写","type":"string","default":""},
+ "poll_seconds":{"description":"拉取最新观察间隔秒；实际采集频率在电脑端设置","type":"int","default":2}
+}
