@@ -19,10 +19,19 @@ def test_existing_pet_renderer(tmp_path, monkeypatch):
         assert pet.widget._pixmaps
         engine.set_enabled(True)
         pet.refresh()
-        assert pet.widget._model.phrase == "陪看中"
+        assert pet.widget._model.phrase == "陪你一起看"
         engine.set_enabled(False)
         pet.refresh()
-        assert pet.widget._model.phrase == "观看已暂停"
+        assert pet.widget._model.phrase == "在这里陪你"
+        assert pet.widget._pet.name == "xiaojing-chibi"
+        assert len(pet.widget._pet.frames["idle"]) > 1
+        engine.pet_action("eat")
+        pet.refresh()
+        assert engine.pet_state["pose"] == "eat"
+        engine.configure({"pet_size": 180, "bubbles": False})
+        pet.refresh()
+        assert pet.widget.width() == 180
+        assert not pet.widget._show_bubble
     finally:
         pet.timer.stop()
         pet.tray.hide()

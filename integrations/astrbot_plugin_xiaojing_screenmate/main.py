@@ -53,6 +53,7 @@ class ScreenmatePlugin(Star):
                 if not self.config.get("enabled") or not self.config.get("token"):
                     self.latest = None
                 else:
+                    await self.request("POST", "/v1/bridge/heartbeat", json={"vision_configured": bool(self.config.get("vision_provider_id"))})
                     observation = (await self.request("GET", "/v1/observations/latest"))["observation"]
                     if observation is None:
                         self.latest = None

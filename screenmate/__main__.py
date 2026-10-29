@@ -11,6 +11,7 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=17860)
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--open-panel", action="store_true", help="启动后打开原生小窝窗口")
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parents[1] / "runtime")
     args = parser.parse_args()
     engine = Engine(args.data_dir)
@@ -30,6 +31,8 @@ def main():
             server_thread.start()
             pet = Pet(engine, FeiyuVoice(engine.config), f"http://127.0.0.1:{args.port}")
             print(f"Pet excluded from capture: {pet.capture_excluded}", flush=True)
+            if args.open_panel:
+                pet.open_panel()
             pet.run()
     except KeyboardInterrupt:
         pass

@@ -4,6 +4,8 @@ import socket
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from .companion_assets import SPRITES, POSES
+
 
 def create_server(engine, host="127.0.0.1", port=17860):
     class Handler(BaseHTTPRequestHandler):
@@ -24,10 +26,18 @@ def create_server(engine, host="127.0.0.1", port=17860):
             return hmac.compare_digest(self.headers.get("Authorization", "").encode(), expected.encode())
 
         def do_GET(self):
-            if self.path == "/":
-                body = (Path(__file__).parent / "web" / "index.html").read_bytes()
+            static = {"/": (Path(__file__).parent / "web/index.html", "text/html; charset=utf-8"),
+                      "/style.css": (Path(__file__).parent / "web/style.css", "text/css; charset=utf-8"),
+                      "/app.js": (Path(__file__).parent / "web/app.js", "text/javascript; charset=utf-8")}
+            for pose in POSES:
+                static[f"/companion/{pose}.png"] = (SPRITES / f"dafeiyu-{pose}.png", "image/png")
+            if self.path in static:
+                path, content_type = static[self.path]
+                if not path.is_file():
+                    return self.send_json(404, {"error": "asset_not_installed"})
+                body = path.read_bytes()
                 self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Type", content_type)
                 self.send_header("Content-Length", str(len(body)))
                 self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
                 self.end_headers()
@@ -61,6 +71,29 @@ def create_server(engine, host="127.0.0.1", port=17860):
                     engine.ingest_text(data)
                 elif self.path == "/v1/replies":
                     engine.publish_reply(data["text"], data["observation_id"], data["session"], data["generation"])
+                elif self.path == "/v1/pet/action":
+                    engine.pet_action(data["pose"])
+                elif self.path == "/v1/bridge/heartbeat":
+                    import time
+                    engine.bridge = {"connected_at": time.time(), "vision_configured": bool(data.get("vision_configured"))}
+                elif self.path == "/v1/voice/test":
+                    import requests
+                    session = requests.Session()
+                    session.trust_env = False
+                    try:
+                        r = session.get(engine.config["voice_url"].rstrip("/") + "/v1/capabilities",
+                                        headers={"Authorization": "Bearer " + engine.config["voice_key"]},
+                                        timeout=8, allow_redirects=False)
+                        r.raise_for_status()
+                        capability = r.json()
+                        available = any(row.get("available") for row in capability.get("tts", []))
+                        engine.voice_status = {"checked": True, "available": available,
+                                               "message": "语音引擎可用" if available else "服务已连接，TTS模型尚未就绪"}
+                    except Exception:
+                        engine.voice_status = {"checked": True, "available": False,
+                                               "message": "暂时无法连接，请检查声音服务地址和密钥"}
+                    finally:
+                        session.close()
                 else:
                     return self.send_json(404, {"error": "not_found"})
                 self.send_json(200, {"ok": True})

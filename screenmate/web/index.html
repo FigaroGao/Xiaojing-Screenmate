@@ -1,22 +1,454 @@
 <!doctype html>
-<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>小鲸 · 桌面小窝</title>
-<style>[hidden]{display:none!important}
-:root{color-scheme:dark;font-family:"Microsoft YaHei UI",system-ui,sans-serif;color:#dfedf8;background:#101b27}*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:auto;padding:48px 32px}.eyebrow{color:#7ac8e9;font-size:12px;letter-spacing:3px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:32px}h1{font-size:38px;font-weight:500;letter-spacing:2px;margin:14px 0}p{color:#91a9bc;line-height:1.8}button,input,select{font:inherit;border-radius:9px;border:1px solid #32485d;padding:11px 14px;background:#172b3b;color:#e2f2ff}button{cursor:pointer}button.primary{background:#83d6ef;color:#102330;border:0;font-weight:600}button:hover{filter:brightness(1.1)}input,select{width:100%;margin-top:8px}input[type=checkbox]{width:auto}.grid{display:grid;grid-template-columns:1.3fr 1fr;gap:20px}.card{padding:26px;border:1px solid #2b4052;border-radius:18px;background:#152331}h2{font-size:18px;font-weight:500;margin:0 0 22px}label{display:block;font-size:13px;color:#b4c9da;margin:18px 0}small{font-size:12px;color:#829eb3;line-height:1.8}.row{display:flex;gap:12px;align-items:center}.pill{padding:9px 14px;border:1px solid #355066;border-radius:30px;color:#8acfe9;font-size:12px}.metric{font-size:42px;color:#91daef;margin:8px 0}#reply{white-space:pre-wrap;min-height:65px;line-height:1.8;color:#cbe6f7}#error{color:#f1b69e;white-space:pre-wrap}details{margin-top:18px}summary{cursor:pointer;color:#a8c5da}.full{grid-column:1/-1}.hint{border-left:2px solid #71b9d5;padding-left:14px}footer{margin-top:24px;font-size:12px;color:#7d9aaf}@media(max-width:760px){.grid{grid-template-columns:1fr}main{padding:24px 18px}header{display:block}h1{font-size:30px}}
-</style>
-<main><header><div><div class="eyebrow">XIAOJING / SCREENMATE</div><h1>在你的桌面，陪你一起看。</h1><p>观察、接话与声音，都从这个小窝连接。</p></div><span class="pill" id="state">等待配对</span></header>
-<section id="login" class="card"><h2>连接你的桌面端</h2><p>右键桌宠 → 小鲸 · 复制配对码，然后粘贴到这里。配对码只保留在当前页面内存。</p><div class="row"><input id="token" type="password" placeholder="配对码" aria-label="配对码"><button class="primary" id="connect">连接</button></div></section>
-<section class="grid" id="panel" hidden>
-<div class="card"><h2>陪看设置</h2><label>观察方式<select id="mode"><option value="mixed">混合 · 文字与画面</option><option value="text">文字 · 浏览器内容</option><option value="vision">视觉 · 屏幕截图</option></select></label><label>观察间隔 / 秒<input id="interval" type="number" min="1" max="3600" value="15"></label><label>截图区域 / 留空为全部屏幕<input id="bbox" placeholder="左, 上, 右, 下，例如 0,0,1280,720"></label><label><input id="skip" type="checkbox" checked> 内容未变化时跳过重复发送</label><div class="row"><button class="primary" id="save">保存设置</button><button id="toggle">开启持续陪看</button></div><p><small>文字模式需要浏览器扩展。混合模式仍会截屏。每次启动先暂停，开启后持续观察，直到你手动暂停。</small></p></div>
-<div class="card"><h2>此刻的连接</h2><div class="metric" id="count">0</div><small>次有效观察 · 只暂存最新一条</small><p id="fresh">尚无画面</p><p class="hint">电脑端提供画面与文字，AstrBot 中的小鲸负责理解和回应。未连接插件前不会产生模型调用费用。</p><small>桌宠可拖动，右键打开设置。声音由电脑上的 Feiyu 服务生成。</small><details><summary>本地声音服务</summary><label>服务地址<input id="voiceUrl" value="http://127.0.0.1:9880"></label><label>服务密钥<input id="voiceKey" type="password" placeholder="填写后保存在本机私有配置"></label><label>声线<select id="voiceStyle"><option value="cute">可爱</option><option value="gentle">温柔</option></select></label><button id="voiceSave">保存声音连接</button></details></div>
-<div class="card full"><h2>小鲸的桌面回复</h2><div id="reply">等小鲸连接后，她的回复会显示在这里和桌宠气泡中。</div><p id="error" role="status"></p><small>这里显示实际收到的回复，不生成模拟陪聊。</small></div></section><footer>FIRST LIGHT · v0.1.0 / 本地截图不落盘 · 配置与配对码不进入 Git</footer></main>
-<script>
-let token='',enabled=false,polling=false;const $=id=>document.getElementById(id);
-async function api(path,body){let r=await fetch('/v1/'+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});if(!r.ok)throw Error('请求失败：'+r.status);return r.json()}
-function error(e){$('error').textContent=e.message}
-async function refresh(initial=false){try{let s=await api('status');enabled=s.enabled;$('state').textContent=enabled?'● 持续陪看中':'○ 观看已暂停';$('toggle').textContent=enabled?'暂停观看':'开启持续陪看';$('count').textContent=s.sequence;$('fresh').textContent=s.has_observation?'最新观察可供小鲸读取':'没有可用的新观察';$('error').textContent=s.error||'';if(s.reply)$('reply').textContent=s.reply.text;if(initial){$('mode').value=s.mode;$('interval').value=s.interval;$('skip').checked=s.skip_unchanged;$('bbox').value=s.monitor_bbox?.join(',')||''}}catch(e){error(e)}}
-$('connect').onclick=async()=>{token=$('token').value.trim();try{await api('status');$('login').hidden=true;$('panel').hidden=false;$('token').value='';await refresh(true);if(!polling){polling=true;setInterval(refresh,2000)}}catch(e){alert('配对失败，请检查配对码与桌面端。')}};
-$('save').onclick=async()=>{try{let bbox=$('bbox').value.trim();await api('settings',{interval:Number($('interval').value),mode:$('mode').value,skip_unchanged:$('skip').checked,monitor_bbox:bbox?bbox.split(',').map(Number):null});await refresh()}catch(e){error(e)}};
-$('toggle').onclick=async()=>{try{await api('watching',{enabled:!enabled});await refresh()}catch(e){error(e)}};
-$('voiceSave').onclick=async()=>{try{const values={voice_url:$('voiceUrl').value,voice_style:$('voiceStyle').value};if($('voiceKey').value)values.voice_key=$('voiceKey').value;await api('settings',values);$('voiceKey').value='';$('error').textContent='声音连接已保存；模型服务须独立运行。'}catch(e){error(e)}};
-</script></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>小鲸的小窝 · Screenmate</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div id="pairing" class="pairing">
+      <div class="pair-art">
+        <img src="/companion/wave.png" alt="挥手的Q版小鲸" /><span
+          >很高兴在桌面见到你</span
+        >
+      </div>
+      <div class="pair-form">
+        <div class="eyebrow">XIAOJING SCREENMATE</div>
+        <h1>欢迎回到小鲸的小窝</h1>
+        <p>桌宠、陪看和声音，都在这里。</p>
+        <form id="pair-form">
+          <label for="pair-token">桌面端配对码</label
+          ><input
+            id="pair-token"
+            type="password"
+            autocomplete="off"
+            placeholder="右键桌宠 → 复制配对码"
+            required
+          /><button class="button primary" type="submit">
+            进入小窝 <span>→</span>
+          </button>
+        </form>
+        <p class="fine">
+          从桌宠双击打开时会自动连接。浏览器连接需要配对码，配对码仅保留在当前页面内存。
+        </p>
+        <p id="pair-error" role="alert"></p>
+      </div>
+    </div>
+    <div id="app" class="shell" hidden>
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">鲸</div>
+          <div><strong>小鲸的小窝</strong><small>SCREENMATE</small></div>
+        </div>
+        <nav aria-label="主要设置">
+          <button class="nav-item active" data-page="watch">
+            <i data-icon="eye"></i><span>一起看屏幕</span></button
+          ><button class="nav-item" data-page="companion">
+            <i data-icon="heart"></i><span>桌面上的小鲸</span></button
+          ><button class="nav-item" data-page="voice">
+            <i data-icon="sound"></i><span>小鲸的声音</span></button
+          ><button class="nav-item" data-page="connect">
+            <i data-icon="link"></i><span>连接与配对</span>
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <span class="version-dot"></span
+          ><span>小鲸 Screenmate<small>v0.2 · Chibi Days</small></span>
+        </div>
+      </aside>
+      <main>
+        <header class="topbar">
+          <div>
+            <span class="breadcrumb">小鲸的小窝</span
+            ><span class="slash">/</span><span id="page-title">一起看屏幕</span>
+          </div>
+          <span class="status-pill" id="watch-state"><b></b>观看已暂停</span>
+        </header>
+        <section class="page" id="page-watch">
+          <div class="hero">
+            <div class="hero-copy">
+              <span class="eyebrow">A LITTLE COMPANY, EVERY DAY</span>
+              <h1>今天，也陪你一起。</h1>
+              <p>
+                看网页、找线索，或是打一场游戏。<br />把小鲸放在桌面，按你的节奏一起看。
+              </p>
+              <div class="hero-actions">
+                <button id="watch-toggle" class="button primary">
+                  <i data-icon="play"></i><span>开启持续陪看</span></button
+                ><span id="hero-state">现在先安静陪着你</span>
+              </div>
+              <div class="hero-note">
+                <span class="tiny-dot"></span>观察频率由你决定，随时可以暂停
+              </div>
+            </div>
+            <div class="hero-companion">
+              <span class="orbit orbit-one"></span
+              ><span class="orbit orbit-two"></span
+              ><span class="spark spark-one">✧</span
+              ><span class="spark spark-two">✧</span>
+              <div class="pet-ground"></div>
+              <img
+                class="companion-image"
+                id="hero-pet"
+                src="/companion/idle.png"
+                alt="Q版小鲸"
+              /><span class="pose-tag" id="pose-label">小鲸在这里</span>
+            </div>
+          </div>
+          <div class="status-strip">
+            <div>
+              <span class="mini-icon" data-icon="eye"></span
+              ><span>屏幕观察<small id="capture-state">还没有开始</small></span>
+            </div>
+            <div>
+              <span class="mini-icon" data-icon="link"></span
+              ><span
+                >小鲸连接<small id="bridge-state"
+                  >等待 AstrBot 连接</small
+                ></span
+              >
+            </div>
+            <div>
+              <span class="mini-icon" data-icon="sound"></span
+              ><span>本地声音<small id="voice-state">尚未配置</small></span>
+            </div>
+          </div>
+          <div class="section-heading">
+            <div>
+              <h2>她怎么看你的屏幕</h2>
+              <p>选一种适合当前场景的方式。</p>
+            </div>
+            <button class="text-button" id="open-preview">
+              查看最近观察 <span>↗</span>
+            </button>
+          </div>
+          <div class="mode-grid" role="group" aria-label="观察方式">
+            <button class="mode-card" data-mode="text">
+              <span class="mode-icon" data-icon="text"></span
+              ><span class="mode-title"
+                >读文字<span class="tag">轻量</span></span
+              ><span class="mode-description"
+                >网页、文章、文字解谜<br />直接读取可见内容</span
+              ><span class="selection-dot"></span></button
+            ><button class="mode-card" data-mode="vision">
+              <span class="mode-icon" data-icon="image"></span
+              ><span class="mode-title">看画面</span
+              ><span class="mode-description"
+                >游戏、视频、图片线索<br />截图交给视觉模块</span
+              ><span class="selection-dot"></span></button
+            ><button class="mode-card" data-mode="mixed">
+              <span class="mode-icon" data-icon="layers"></span
+              ><span class="mode-title"
+                >一起看<span class="tag">混合</span></span
+              ><span class="mode-description"
+                >图文网页、ARG 游戏<br />同时保留文字和画面</span
+              ><span class="selection-dot"></span>
+            </button>
+          </div>
+          <div class="two-columns">
+            <section class="card frequency-card">
+              <div class="card-heading">
+                <h2>多久看一眼</h2>
+                <span class="number-pill"
+                  ><strong id="interval-display">15</strong> 秒</span
+                >
+              </div>
+              <div class="interval-presets" role="group" aria-label="观察间隔">
+                <button data-interval="3">3 秒</button
+                ><button data-interval="5">5 秒</button
+                ><button data-interval="15">15 秒</button
+                ><button data-interval="30">30 秒</button
+                ><button data-interval="60">1 分钟</button>
+              </div>
+              <label class="field-label" for="interval">自定义间隔</label>
+              <div class="inline-field">
+                <input
+                  id="interval"
+                  type="number"
+                  min="1"
+                  max="3600"
+                  value="15"
+                /><span>秒 / 次</span
+                ><button id="save-interval" class="button secondary small">
+                  保存
+                </button>
+              </div>
+              <p class="fine">
+                这是采集频率。内容没变化时可以跳过，处理中的画面不会排成长队。
+              </p>
+              <label class="switch-row"
+                ><span
+                  >跳过相同内容<small>画面不变时，减少重复视觉调用</small></span
+                ><input id="skip" type="checkbox" role="switch" /><span
+                  class="switch-track"
+                ></span
+              ></label>
+            </section>
+            <section class="card">
+              <div class="card-heading">
+                <h2>只看你想给她看的</h2>
+                <i data-icon="frame"></i>
+              </div>
+              <label class="field-label" for="bbox">截图范围</label
+              ><input id="bbox" placeholder="全部屏幕，或填写 左,上,右,下" />
+              <p class="fine">
+                例如 0,0,1280,720。文字模式通过浏览器扩展选择当前页。
+              </p>
+              <button id="save-region" class="button secondary small">
+                保存范围
+              </button>
+              <div class="soft-note">
+                <i data-icon="info"></i
+                ><span id="mode-note"
+                  >混合模式会同时获取截图与浏览器文字。</span
+                >
+              </div>
+            </section>
+          </div>
+          <section class="reply-card">
+            <div class="reply-avatar">
+              <img src="/companion/talk.png" alt="" />
+            </div>
+            <div class="reply-content">
+              <div class="reply-title">
+                <strong>小鲸说</strong
+                ><span id="reply-time">等待连接后的真实回复</span>
+              </div>
+              <p id="reply">
+                连接小鲸后，她的回复会出现在这里，也会显示在桌宠气泡里。
+              </p>
+            </div>
+          </section>
+          <div
+            id="capture-error"
+            class="error-banner"
+            role="status"
+            hidden
+          ></div>
+        </section>
+        <section class="page" id="page-companion" hidden>
+          <div class="page-heading">
+            <span class="eyebrow">A SMALL WHALE, A LITTLE CLOSER</span>
+            <h1>桌面上的小鲸</h1>
+            <p>是会眨眼、会吃饭，也会被戳得气鼓鼓的小小鲸鱼娘。</p>
+          </div>
+          <div class="companion-layout">
+            <section class="companion-stage">
+              <span class="stage-label">Q版 · 18 种姿态</span>
+              <div class="stage-glow"></div>
+              <img
+                id="stage-pet"
+                class="companion-image"
+                src="/companion/idle.png"
+                alt="Q版小鲸动作预览"
+              />
+              <div class="stage-ground"></div>
+              <strong id="stage-pose">待机</strong>
+              <p>轻点互动 · 双击打开小窝 · 滚轮调节大小</p>
+              <div class="interaction-row">
+                <button class="button secondary small" data-pose="love">
+                  摸摸头</button
+                ><button class="button secondary small" data-pose="eat">
+                  喂口白饭</button
+                ><button class="button secondary small" data-pose="wave">
+                  打招呼
+                </button>
+              </div>
+              <small class="fine">这些是本地动作，不会调用聊天模型。</small>
+            </section>
+            <section class="card appearance-settings">
+              <h2>让她用舒服的方式陪你</h2>
+              <label class="field-label" for="pet-size"
+                >桌宠大小 <span id="size-value">218 px</span></label
+              ><input
+                id="pet-size"
+                type="range"
+                min="100"
+                max="400"
+                value="218"
+              />
+              <div class="range-labels">
+                <span>小小一只</span><span>更近一点</span>
+              </div>
+              <label class="field-label" for="activity">平时有多活泼</label
+              ><select id="activity">
+                <option value="quiet">安静陪伴 · 少些小动作</option>
+                <option value="balanced">刚刚好 · 偶尔动一动</option>
+                <option value="lively">活泼一点 · 多些小动作</option></select
+              ><label class="switch-row"
+                ><span>轻柔动画<small>减慢动作，并关闭随机小动作</small></span
+                ><input
+                  id="reduced-motion"
+                  type="checkbox"
+                  role="switch" /><span class="switch-track"></span></label
+              ><label class="switch-row"
+                ><span>显示对话气泡<small>气泡只显示状态和实际回复</small></span
+                ><input id="bubbles" type="checkbox" role="switch" /><span
+                  class="switch-track"
+                ></span></label
+              ><button id="save-appearance" class="button primary">
+                保存陪伴偏好
+              </button>
+            </section>
+          </div>
+          <div class="section-heading">
+            <div>
+              <h2>看看她的小表情</h2>
+              <p>点一下，桌面上的小鲸也会做这个动作。</p>
+            </div>
+          </div>
+          <div class="pose-grid" id="pose-grid"></div>
+          <p class="fine attribution">
+            角色素材：bauerelizabeth07139 / dsh-pet-dafeiyu · 桌宠引擎：LINNoot
+            / dsh-co-pet
+          </p>
+        </section>
+        <section class="page" id="page-voice" hidden>
+          <div class="page-heading">
+            <span class="eyebrow">A FAMILIAR VOICE, RIGHT HERE</span>
+            <h1>听见小鲸的声音</h1>
+            <p>连接电脑上的 Feiyu，让她用熟悉的声线说话。</p>
+          </div>
+          <div class="two-columns">
+            <section class="card voice-card">
+              <div class="card-heading">
+                <h2>本地声音服务</h2>
+                <span class="tag">Feiyu</span>
+              </div>
+              <label class="field-label" for="voice-url">服务地址</label
+              ><input
+                id="voice-url"
+                placeholder="http://127.0.0.1:9880"
+              /><label class="field-label" for="voice-key">服务密钥</label
+              ><input
+                id="voice-key"
+                type="password"
+                autocomplete="off"
+                placeholder="留空保留已保存的密钥"
+              /><label class="field-label" for="voice-style">默认声线</label
+              ><select id="voice-style">
+                <option value="cute">可爱 · 日常聊天</option>
+                <option value="gentle">温柔 · 安静陪伴</option>
+              </select>
+              <div class="form-actions">
+                <button id="save-voice" class="button primary">
+                  保存声音设置</button
+                ><button id="test-voice" class="button secondary">
+                  检测服务
+                </button>
+              </div>
+              <div id="voice-result" class="soft-note">
+                <i data-icon="info"></i
+                ><span>检测只检查服务和模型状态，不生成语音。</span>
+              </div>
+            </section>
+            <section class="voice-story">
+              <img src="/companion/sing.png" alt="哼歌的小鲸" />
+              <h2>文字在这里，变成声音。</h2>
+              <p>
+                小鲸回复 → 本地 Feiyu 合成 → 电脑播放。<br />新台词到来时会打断旧的本机播放。
+              </p>
+              <div class="soft-note">
+                <i data-icon="info"></i
+                ><span
+                  >声音模型需要独立部署。保存服务地址不代表声音已经可用，检测后会显示实际状态。</span
+                >
+              </div>
+            </section>
+          </div>
+        </section>
+        <section class="page" id="page-connect" hidden>
+          <div class="page-heading">
+            <span class="eyebrow">ONE WHALE, DIFFERENT PLACES</span>
+            <h1>让小鲸来到桌面</h1>
+            <p>电脑负责看见，AstrBot 里的小鲸负责理解和回应。</p>
+          </div>
+          <div class="connection-flow">
+            <div>
+              <i data-icon="screen"></i><strong>这台电脑</strong
+              ><small>画面与当前页文字</small>
+            </div>
+            <span>↔</span>
+            <div>
+              <img src="/companion/think.png" alt="" /><strong>小鲸</strong
+              ><small>AstrBot 对话与人格</small>
+            </div>
+            <span>→</span>
+            <div>
+              <i data-icon="heart"></i><strong>桌面陪伴</strong
+              ><small>气泡、动作与声音</small>
+            </div>
+          </div>
+          <div class="two-columns">
+            <section class="card">
+              <div class="card-heading">
+                <h2>AstrBot 连接</h2>
+                <span class="connection-indicator" id="bridge-badge"
+                  >等待连接</span
+                >
+              </div>
+              <p class="body-copy">
+                在配套插件里填写电脑地址、配对码和主人
+                ID。视觉模式还需选择已有的视觉模型。
+              </p>
+              <div class="connection-address">
+                <small>本机服务地址</small><code id="server-address"></code>
+              </div>
+              <button id="copy-address" class="button secondary small">
+                复制本机地址
+              </button>
+              <div class="soft-note">
+                <i data-icon="info"></i
+                ><span
+                  >平板连接时需要电脑的局域网地址，并让服务监听局域网。当前页面不会擅自修改网络设置。</span
+                >
+              </div>
+            </section>
+            <section class="card">
+              <h2>浏览器文字入口</h2>
+              <p class="body-copy">
+                加载项目里的
+                browser-extension，打开要陪看的页面，在扩展里填写配对码并开启当前页。
+              </p>
+              <ol class="steps">
+                <li><b>1</b><span>Chrome / Edge → 扩展管理</span></li>
+                <li><b>2</b><span>加载已解压扩展 → browser-extension</span></li>
+                <li><b>3</b><span>在当前页开启，电脑端选择“读文字”</span></li>
+              </ol>
+              <p class="fine">
+                只读当前页可见文字。图片、Canvas 和隐藏线索仍需视觉模式。
+              </p>
+            </section>
+          </div>
+          <section class="card connection-boundary">
+            <i data-icon="info"></i>
+            <p>
+              当前版本在主人正常私聊时加入桌面观察，并把实际回复带回桌面。自主接话、桌面输入送入原会话和本地声音模型部署仍在后续集成范围。
+            </p>
+          </section>
+        </section>
+      </main>
+    </div>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <dialog id="preview-dialog">
+      <div class="dialog-heading">
+        <div>
+          <h2>最近一次有效观察</h2>
+          <p id="preview-meta"></p>
+        </div>
+        <button class="icon-button" id="close-preview" aria-label="关闭预览">
+          ×
+        </button>
+      </div>
+      <div id="preview-empty" class="empty-state">
+        <i data-icon="eye"></i>
+        <p>还没有可用的观察</p>
+        <small>开启陪看后，这里才会显示真实画面或文字。</small>
+      </div>
+      <img id="preview-image" alt="最近一次屏幕截图" hidden />
+      <pre id="preview-text" hidden></pre>
+    </dialog>
+    <script src="/app.js"></script>
+  </body>
+</html>
