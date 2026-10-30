@@ -29,6 +29,11 @@ class Resident:
         self.lock = threading.RLock()
         self.pending = queue.Queue(maxsize=4)
         self.boot = time.monotonic()
+        self.precision = os.environ.get('SCREENMATE_VOICE_PRECISION', 'fp32')
+        if self.precision not in ('fp32', 'fp16'):
+            raise ValueError('Unsupported resident precision')
+        self.memory = {}
+        self.dtypes = {}
         self.key = (SERVER / '.runtime/voice-service/api_key.txt').read_text().strip()
 
     def work(self):
@@ -61,13 +66,17 @@ class Resident:
                 audio *= min(1., .98 / float(abs(audio).max()))
                 output = io.BytesIO()
                 sf.write(output, audio, self.voice.sample_rate, format='WAV', subtype='PCM_16')
+                torch.cuda.synchronize()
+                self.memory = {'allocated_mib':round(torch.cuda.memory_allocated()/2**20),
+                               'reserved_mib':round(torch.cuda.memory_reserved()/2**20)}
                 with self.lock:
                     self.jobs[job_id].update(status='success', wav=output.getvalue(),
                         audio={'seconds':len(audio)/self.voice.sample_rate, 'sample_rate':self.voice.sample_rate,
-                               'elapsed_seconds':time.monotonic()-started, 'resident':True, 'style':'cute'})
+                               'elapsed_seconds':time.monotonic()-started, 'resident':True, 'style':'cute',
+                               'precision':self.precision,'cuda_memory':dict(self.memory)})
             except Exception as exc:
                 with self.lock:
-                    self.jobs[job_id].update(status='failed', error=type(exc).__name__)
+                    self.jobs[job_id].update(status='failed', error=type(exc).__name__+': '+str(exc)[:300])
             finally:
                 self.pending.task_done()
 
@@ -90,12 +99,20 @@ class Resident:
         selected = manifest['styles']['cute']
         with cpu_onnx_sessions(ort, []):
             self.voice = AutoModel(model_dir=str(PACKAGE/manifest['base_model_dir']),
-                                   fp16=False, load_trt=False, load_vllm=False)
+                                   fp16=self.precision=='fp16', load_trt=False, load_vllm=False)
         checkpoint = PACKAGE / selected['llm_checkpoint']
         weights = torch.load(checkpoint, map_location='cpu', weights_only=True)
         self.voice.model.llm.load_state_dict(weights, strict=True)
         del weights
+        if self.precision == 'fp16':
+            # Keep the final waveform decoder FP32, as in upstream token2wav.
+            self.voice.model.llm.half()
+            self.voice.model.flow.half()
+            torch.cuda.empty_cache()
+        self.runtime = {**self.runtime,'resident_precision':self.precision}
         self.voice.model.llm.eval()
+        self.dtypes = {name:str(next(getattr(self.voice.model,name).parameters()).dtype)
+                       for name in ('llm','flow','hift')}
         for name in ('llm','flow','hift'):
             if next(getattr(self.voice.model,name).parameters()).device.type != 'cuda':
                 raise RuntimeError('Resident model must use CUDA')
@@ -107,6 +124,9 @@ class Resident:
         self.paths += [repo/p for p in profile['source_sha256']]
         self.paths += [profile_path,PACKAGE/'manifest.json',PACKAGE/'files_sha256.json']
         self.stamp = fingerprint(self.paths)
+        torch.cuda.synchronize()
+        self.memory = {'allocated_mib':round(torch.cuda.memory_allocated()/2**20),
+                       'reserved_mib':round(torch.cuda.memory_reserved()/2**20)}
         self.ready = True
         print('Resident cute model ready in %.1fs' % (time.monotonic()-self.boot), flush=True)
 
@@ -135,7 +155,8 @@ def handler(resident):
             if self.path == '/v1/capabilities':
                 return self.send(200,{'tts':[{'voice':'feiyu','available':resident.ready,
                     'styles':['cute']}], 'resident':True, 'loading':not resident.ready and not resident.error,
-                    'error':resident.error, 'pid':os.getpid()})
+                    'error':resident.error, 'pid':os.getpid(), 'precision':resident.precision,
+                    'cuda_memory':dict(resident.memory), 'parameter_dtypes':dict(resident.dtypes)})
             parts = self.path.split('/')
             with resident.lock:
                 job = resident.jobs.get(parts[3]) if len(parts)>=4 and parts[1:3]==['v1','jobs'] else None

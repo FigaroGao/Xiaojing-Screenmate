@@ -36,9 +36,15 @@ def start_installed_voice(engine):
         with (server / ".runtime/voice-service/launcher.log").open("ab") as log:
             if base.endswith(":9881"):
                 profile = json.loads((root / "runtime/voice-linux/tts/runtime.local.json").read_text(encoding="utf-8"))
+                options_path = root / 'runtime/resident-voice.private.json'
+                options = json.loads(options_path.read_text(encoding='utf-8')) if options_path.is_file() else {}
+                precision = options.get('precision','fp32')
+                if precision not in ('fp32','fp16'):
+                    return
                 linux_root = '/mnt/' + root.drive[0].lower() + root.as_posix()[2:]
                 command = ["wsl.exe", "-d", profile["distribution"], "-e", "env",
-                           "LD_LIBRARY_PATH="+profile["python_library_dir"],profile["python"],"-B",
+                           "LD_LIBRARY_PATH="+profile["python_library_dir"],
+                           "SCREENMATE_VOICE_PRECISION="+precision,profile["python"],"-B",
                            linux_root+"/tools/resident_voice.py"]
             else:
                 command = [str(python), "-m", "feiyu_voice_service", "--config", str(config),
