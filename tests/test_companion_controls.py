@@ -7,6 +7,15 @@ from screenmate.core import Engine
 from screenmate.server import create_server
 
 
+def test_voice_preference_stays_cute_across_restarts(tmp_path):
+    engine = Engine(tmp_path)
+    with pytest.raises(ValueError):
+        engine.configure({"voice_style": "gentle"})
+    engine.config["voice_style"] = "gentle"
+    engine.save()
+    assert Engine(tmp_path).config["voice_style"] == "cute"
+
+
 def test_cosmetic_settings_do_not_invalidate_or_trigger_capture(tmp_path):
     from PIL import Image
     engine = Engine(tmp_path, capture=lambda box: Image.new("RGB", (20, 20)))

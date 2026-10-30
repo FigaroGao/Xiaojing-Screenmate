@@ -29,6 +29,7 @@ class Engine:
         if self.path.exists():
             self.config.update(json.loads(self.path.read_text(encoding="utf-8")))
         self.config.setdefault("token", secrets.token_urlsafe(32))
+        self.config["voice_style"] = "cute"
         self.save()
         self.lock = threading.RLock()
         self.wake = threading.Event()
@@ -77,7 +78,7 @@ class Engine:
         for key in ("skip_unchanged", "reduced_motion", "bubbles", "input_passthrough"):
             if key in values and type(values[key]) is not bool:
                 raise ValueError("需要布尔值")
-        if values.get("voice_style", self.config["voice_style"]) not in ("cute", "gentle"):
+        if values.get("voice_style", self.config["voice_style"]) != "cute":
             raise ValueError("未知声线")
         voice_url = values.get("voice_url", self.config["voice_url"])
         url = urlsplit(voice_url)
