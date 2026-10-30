@@ -1,5 +1,15 @@
 # 本机 Feiyu 语音
 
+## 当前选择：INT8 优先省显存
+
+按主人优先省显存的偏好，本机私有配置现为 `{"precision":"int8"}`。新增依赖 bitsandbytes==0.49.1 安装在现有 WSL 推理环境，不升级 Torch；采用官方 [Linear8bitLt](https://huggingface.co/docs/bitsandbytes/reference/nn/linear8bit) 路径（has_fp16_weights=False、threshold=6）。只量化 Qwen transformer layers 的168个 Linear，并逐层验证权重确实为 torch.int8；嵌入、语音输出头、声学模型仍为 FP16，波形解码器 FP32。capabilities 中的 parameter_dtypes 是各大模块第一个参数的类型，llm 显示 float16 指的是保留的嵌入；quantized_layers=168 才是内部 INT8 层的数量。
+
+与FP16相同三句测试：16.016/11.594/12.718秒，音频4.44/3.68/4.44秒；同一进程连续成功。INT8 PyTorch allocated稳态1386MiB、reserved1522MiB，FP16为1733/1864MiB：allocated减少347MiB，reserved减少342MiB。桌面总显存快照2784MiB，FP16先前为3280MiB；总量受其他应用影响，不能全部归因于量化。
+
+采用 INT8 的取舍是短句生成明显慢于FP16（约12–16秒对比4–7秒），仅用于显存优先模式。三段PCM均非静音、无削波，原始模型文件未改写；人工音质满意度和游戏并行仍需体验。切回私有配置中的 fp16 并重启常驻服务即可恢复之前模式；不要只改文件而期待已加载模型即时转换。
+
+重建环境时需在 WSL 推理 venv 安装 `bitsandbytes==0.49.1`，可用 `--no-deps` 保留锁定的 Torch 环境，并运行 pip check 和实际 CUDA/语音验收。
+
 ## FP16 实测与本机选择
 
 本机已在 `runtime/resident-voice.private.json` 保存 `{"precision":"fp16"}`。启动器将选择传给常驻服务；没有此私有设置时默认为 fp32。改成 fp32 后需重新启动常驻进程才能回退，改变文件不会修改已加载的模型。

@@ -39,7 +39,7 @@ def start_installed_voice(engine):
                 options_path = root / 'runtime/resident-voice.private.json'
                 options = json.loads(options_path.read_text(encoding='utf-8')) if options_path.is_file() else {}
                 precision = options.get('precision','fp32')
-                if precision not in ('fp32','fp16'):
+                if precision not in ('fp32','fp16','int8'):
                     return
                 linux_root = '/mnt/' + root.drive[0].lower() + root.as_posix()[2:]
                 command = ["wsl.exe", "-d", profile["distribution"], "-e", "env",

@@ -21,6 +21,26 @@ def fingerprint(paths):
     return [(str(p), p.stat().st_size, p.stat().st_mtime_ns) for p in paths]
 
 
+def quantize_transformer_int8(module):
+    """Quantize transformer Linear weights; preserve embeddings and speech heads."""
+    import torch
+    import bitsandbytes as bnb
+    count = 0
+    for name, child in list(module.named_children()):
+        if isinstance(child, torch.nn.Linear):
+            replacement = bnb.nn.Linear8bitLt(child.in_features, child.out_features,
+                bias=child.bias is not None, has_fp16_weights=False, threshold=6.0)
+            replacement.load_state_dict({k:v.detach().cpu().half() for k,v in child.state_dict().items()})
+            replacement = replacement.to(child.weight.device).eval()
+            if replacement.weight.dtype != torch.int8:
+                raise RuntimeError('INT8 layer did not quantize')
+            setattr(module, name, replacement)
+            count += 1
+        else:
+            count += quantize_transformer_int8(child)
+    return count
+
+
 class Resident:
     def __init__(self):
         self.ready = False
@@ -30,10 +50,11 @@ class Resident:
         self.pending = queue.Queue(maxsize=4)
         self.boot = time.monotonic()
         self.precision = os.environ.get('SCREENMATE_VOICE_PRECISION', 'fp32')
-        if self.precision not in ('fp32', 'fp16'):
+        if self.precision not in ('fp32', 'fp16', 'int8'):
             raise ValueError('Unsupported resident precision')
         self.memory = {}
         self.dtypes = {}
+        self.quantized_layers = 0
         self.key = (SERVER / '.runtime/voice-service/api_key.txt').read_text().strip()
 
     def work(self):
@@ -99,15 +120,19 @@ class Resident:
         selected = manifest['styles']['cute']
         with cpu_onnx_sessions(ort, []):
             self.voice = AutoModel(model_dir=str(PACKAGE/manifest['base_model_dir']),
-                                   fp16=self.precision=='fp16', load_trt=False, load_vllm=False)
+                                   fp16=self.precision!='fp32', load_trt=False, load_vllm=False)
         checkpoint = PACKAGE / selected['llm_checkpoint']
         weights = torch.load(checkpoint, map_location='cpu', weights_only=True)
         self.voice.model.llm.load_state_dict(weights, strict=True)
         del weights
-        if self.precision == 'fp16':
+        if self.precision in ('fp16','int8'):
             # Keep the final waveform decoder FP32, as in upstream token2wav.
             self.voice.model.llm.half()
             self.voice.model.flow.half()
+            if self.precision == 'int8':
+                self.quantized_layers = quantize_transformer_int8(self.voice.model.llm.llm.model.model.layers)
+                if not self.quantized_layers:
+                    raise RuntimeError('No transformer layers were quantized')
             torch.cuda.empty_cache()
         self.runtime = {**self.runtime,'resident_precision':self.precision}
         self.voice.model.llm.eval()
@@ -156,7 +181,8 @@ def handler(resident):
                 return self.send(200,{'tts':[{'voice':'feiyu','available':resident.ready,
                     'styles':['cute']}], 'resident':True, 'loading':not resident.ready and not resident.error,
                     'error':resident.error, 'pid':os.getpid(), 'precision':resident.precision,
-                    'cuda_memory':dict(resident.memory), 'parameter_dtypes':dict(resident.dtypes)})
+                    'cuda_memory':dict(resident.memory), 'parameter_dtypes':dict(resident.dtypes),
+                    'quantized_layers':resident.quantized_layers})
             parts = self.path.split('/')
             with resident.lock:
                 job = resident.jobs.get(parts[3]) if len(parts)>=4 and parts[1:3]==['v1','jobs'] else None
