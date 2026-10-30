@@ -55,7 +55,7 @@ python -m venv .venv
 
 ## 本地声音
 
-本机按显存优先选择 INT8 常驻可爱模型：语言模型内部 Linear 使用 INT8，其余语言/声学部分 FP16，波形解码器 FP32。短句约12–16秒，桌面总显存快照约2.7GB。FP16模式约4–7秒、总量约3.2GB，速度更快；具体对比和回退方式见下方本地声音说明。
+本机按响应速度优先选择 FP16 常驻可爱模型：语言/声学部分 FP16，波形解码器 FP32。短句约4–7秒，桌面总显存快照约3.2GB。INT8省显存方案保留为可选模式（约2.7GB、12–16秒）；具体对比与切换方式见下方本地声音说明。
 
 本机使用 [Feiyu Voice](https://github.com/Esmerubphire/astrbot_plugin_feiyu_voice) 的现成 CosyVoice3 模型；Windows API 服务配合 WSL CUDA 推理，模型、隔离环境及私有密钥保存在被忽略的 `runtime/`。安装记录见 [本地声音说明](docs/LOCAL_VOICE.md)。这属于本地推理，尚未训练新的小鲸声线。
 

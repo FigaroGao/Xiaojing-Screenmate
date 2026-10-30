@@ -1,8 +1,12 @@
 # 本机 Feiyu 语音
 
-## 当前选择：INT8 优先省显存
+## 当前选择：FP16 优先响应速度
 
-按主人优先省显存的偏好，本机私有配置现为 `{"precision":"int8"}`。新增依赖 bitsandbytes==0.49.1 安装在现有 WSL 推理环境，不升级 Torch；采用官方 [Linear8bitLt](https://huggingface.co/docs/bitsandbytes/reference/nn/linear8bit) 路径（has_fp16_weights=False、threshold=6）。只量化 Qwen transformer layers 的168个 Linear，并逐层验证权重确实为 torch.int8；嵌入、语音输出头、声学模型仍为 FP16，波形解码器 FP32。capabilities 中的 parameter_dtypes 是各大模块第一个参数的类型，llm 显示 float16 指的是保留的嵌入；quantized_layers=168 才是内部 INT8 层的数量。
+主人试听并比较后选择恢复 FP16：短句约4–7秒、桌面总显存约3.2GB。本机 `runtime/resident-voice.private.json` 已恢复为 `{"precision":"fp16"}`，常驻服务按该模式重启。以下 INT8 记录保留为可选省显存方案，当前不启用。
+
+## INT8 省显存试验记录
+
+省显存试验时私有配置为 `{"precision":"int8"}`。新增依赖 bitsandbytes==0.49.1 安装在现有 WSL 推理环境，不升级 Torch；采用官方 [Linear8bitLt](https://huggingface.co/docs/bitsandbytes/reference/nn/linear8bit) 路径（has_fp16_weights=False、threshold=6）。只量化 Qwen transformer layers 的168个 Linear，并逐层验证权重确实为 torch.int8；嵌入、语音输出头、声学模型仍为 FP16，波形解码器 FP32。capabilities 中的 parameter_dtypes 是各大模块第一个参数的类型，llm 显示 float16 指的是保留的嵌入；quantized_layers=168 才是内部 INT8 层的数量。
 
 与FP16相同三句测试：16.016/11.594/12.718秒，音频4.44/3.68/4.44秒；同一进程连续成功。INT8 PyTorch allocated稳态1386MiB、reserved1522MiB，FP16为1733/1864MiB：allocated减少347MiB，reserved减少342MiB。桌面总显存快照2784MiB，FP16先前为3280MiB；总量受其他应用影响，不能全部归因于量化。
 
