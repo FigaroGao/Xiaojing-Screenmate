@@ -176,7 +176,7 @@ function apply(status, initial = false) {
     document.body.classList.toggle("reduced-motion", p.reduced_motion || false);
   }
   if (initial || !editing.voice) {
-    $("voice-url").value = p.voice_url || "http://127.0.0.1:9880";
+    $("voice-url").value = p.voice_url || "http://127.0.0.1:9881";
     $("voice-style").value = p.voice_style || "cute";
   }
 }

@@ -1,5 +1,15 @@
 # 本机 Feiyu 语音
 
+## 当前默认：可爱模型常驻
+
+Screenmate 使用 `tools/resident_voice.py` 在 WSL 中提供仅回环监听的 `127.0.0.1:9881`。启动时校验原始模型与源码摘要、加载可爱 checkpoint、验证 CUDA 设备，并通过上游 `add_zero_shot_spk` 缓存参考音频特征。后续任务复用同一个模型、缓存与 CUDA 上下文；每次检查已验证文件的大小/修改时间，检测变化则拒绝合成，需重启重新校验。不修改上游源码、权重和校验清单。
+
+服务保留 Bearer 鉴权，只接受 cute，串行合成，队列上限4；最多保留16个任务的音频于内存，不把新台词和输出写入磁盘。已提交任务不提供服务端取消。退出 Screenmate 后服务仍常驻，便于再次打开时复用；结束常驻 Python 进程才会释放其显存。重新启动服务需再次冷加载。
+
+本机连续三句实测总耗时6.969/4.531/4.735秒，输出时长3.92/3.96/3.92秒，三个任务的服务PID相同。首次进程初始化214.1秒。经 Screenmate 实际试听，Windows播放和 PCM 嘴型变化再次验证通过；系统总显存占用约5.0GB/6GB（包含其他桌面应用），未验收大型游戏并行。
+
+首次连接运行 `tools/connect_local_voice.py`；已配好时启动 Screenmate 自动拉起或复用服务。原始隔离服务9880作为回退，使用 `tools/connect_local_voice.py --isolated`。以下旧服务记录与历史计时保留用于对比，当前默认不再逐句冷加载。
+
 模型和服务来自 [Esmerubphire/astrbot_plugin_feiyu_voice](https://github.com/Esmerubphire/astrbot_plugin_feiyu_voice)，服务源码固定 `76774b499f7d306454562d56348dd63399b6d7e8`。使用已训练好的可爱/温柔声线进行本地推理，不涉及重新训练。
 
 ## 安装位置

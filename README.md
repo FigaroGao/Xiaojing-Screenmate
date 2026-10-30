@@ -57,7 +57,7 @@ python -m venv .venv
 
 本机使用 [Feiyu Voice](https://github.com/Esmerubphire/astrbot_plugin_feiyu_voice) 的现成 CosyVoice3 模型；Windows API 服务配合 WSL CUDA 推理，模型、隔离环境及私有密钥保存在被忽略的 `runtime/`。安装记录见 [本地声音说明](docs/LOCAL_VOICE.md)。这属于本地推理，尚未训练新的小鲸声线。
 
-声音固定使用 cute 可爱声线，声音页可检测接口和试听。匹配本机安装与密钥时，启动 Screenmate 会在后台拉起语音 API 服务；不覆盖已占用端口。当前每句合成都需冷加载模型，等待期间显示状态。新台词停止本机旧音频，但已提交的服务端任务可能仍会继续推理。
+声音固定使用 cute 可爱声线，声音页可检测接口和试听。匹配本机安装与密钥时，启动 Screenmate 会在后台拉起 WSL 常驻服务（127.0.0.1:9881），复用同一 CUDA 模型与参考音频特征；不覆盖已占用端口。进程启动时冷加载一次，后续请求无需重新加载权重。新台词停止本机旧音频，但已提交的服务端任务仍可能继续推理。首次配置运行 `tools/connect_local_voice.py`；`--isolated` 可回退旧版9880服务。
 
 ## 验证与边界
 

@@ -4,6 +4,8 @@ from pathlib import Path
 import shutil
 import subprocess
 import time
+import sys
+from types import SimpleNamespace
 
 import requests
 
@@ -11,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVER = ROOT / "runtime/feiyu-voice/server"
 
 
-def main():
+def connect_isolated():
     runtime = ROOT / "runtime/voice-linux/tts"
     diagnostic = json.loads((runtime / "diagnostic.json").read_text(encoding="utf-8"))
     if diagnostic.get("status") != "success":
@@ -56,6 +58,37 @@ def main():
                 pass
         time.sleep(1)
     raise RuntimeError("Feiyu API did not become ready; inspect runtime/voice-service.log")
+
+
+def main():
+    if '--isolated' in sys.argv:
+        return connect_isolated()
+    sys.path.insert(0,str(ROOT))
+    from screenmate.local_voice import start_installed_voice
+    key=(SERVER/'.runtime/voice-service/api_key.txt').read_text(encoding='utf-8').strip()
+    settings=json.loads((ROOT/'runtime/settings.private.json').read_text(encoding='utf-8'))
+    base='http://127.0.0.1:9881'
+    start_installed_voice(SimpleNamespace(config={**settings,'voice_url':base,'voice_key':key}))
+    session=requests.Session()
+    session.trust_env=False
+    for _ in range(600):
+        try:
+            result=session.get(base+'/v1/capabilities',headers={'Authorization':'Bearer '+key},timeout=3)
+            result.raise_for_status()
+            status=result.json()
+            if status.get('error'):
+                raise RuntimeError(status['error'])
+            if status.get('resident') and any(v.get('available') for v in status.get('tts',[])):
+                response=session.post('http://127.0.0.1:17860/v1/settings',
+                    headers={'Authorization':'Bearer '+settings['token']},
+                    json={'voice_url':base,'voice_key':key,'voice_style':'cute'},timeout=5)
+                response.raise_for_status()
+                print('Resident cute voice connected; model and reference cache remain loaded.')
+                return
+        except requests.RequestException:
+            pass
+        time.sleep(1)
+    raise RuntimeError('Resident voice not ready; inspect runtime/feiyu-voice/server/.runtime/voice-service/launcher.log')
 
 
 if __name__ == "__main__":

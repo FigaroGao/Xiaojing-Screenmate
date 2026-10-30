@@ -15,7 +15,7 @@ from PIL import ImageGrab
 
 DEFAULTS = dict(interval=15.0, mode="mixed", skip_unchanged=True,
                 monitor_bbox=None, text_ttl=45, observation_ttl=90,
-                voice_url="http://127.0.0.1:9880", voice_key="", voice_style="cute",
+                voice_url="http://127.0.0.1:9881", voice_key="", voice_style="cute",
                 pet_size=218, activity="balanced", reduced_motion=False, bubbles=True,
                 pet_scheme="deepseek", pet_outfit="maid", render_fps=30, input_passthrough=True)
 
