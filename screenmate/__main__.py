@@ -12,9 +12,12 @@ def main():
     parser.add_argument("--port", type=int, default=17860)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--open-panel", action="store_true", help="启动后打开原生小窝窗口")
+    parser.add_argument("--renderer", choices=("coopanion", "sprites"), default="coopanion")
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parents[1] / "runtime")
     args = parser.parse_args()
     engine = Engine(args.data_dir)
+    from .local_voice import start_installed_voice
+    start_installed_voice(engine)
     server = create_server(engine, args.host, args.port)
     worker = threading.Thread(target=engine.run, daemon=True)
     worker.start()
@@ -25,7 +28,10 @@ def main():
         if args.headless:
             server.serve_forever()
         else:
-            from .pet import Pet
+            if args.renderer == "sprites":
+                from .legacy_pet import Pet
+            else:
+                from .pet import Pet
             from .voice import FeiyuVoice
             server_thread = threading.Thread(target=server.serve_forever, daemon=True)
             server_thread.start()

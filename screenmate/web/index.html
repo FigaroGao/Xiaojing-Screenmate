@@ -9,7 +9,7 @@
   <body>
     <div id="pairing" class="pairing">
       <div class="pair-art">
-        <img src="/companion/wave.png" alt="挥手的Q版小鲸" /><span
+        <iframe class="pair-renderer" src="/renderer?preview=1" title="动态小鲸"></iframe><span
           >很高兴在桌面见到你</span
         >
       </div>
@@ -54,7 +54,7 @@
         </nav>
         <div class="sidebar-bottom">
           <span class="version-dot"></span
-          ><span>小鲸 Screenmate<small>v0.2 · Chibi Days</small></span>
+          ><span>小鲸 Screenmate<small>v0.3 · Living Companion</small></span>
         </div>
       </aside>
       <main>
@@ -88,12 +88,12 @@
               ><span class="spark spark-one">✧</span
               ><span class="spark spark-two">✧</span>
               <div class="pet-ground"></div>
-              <img
+              <iframe
                 class="companion-image"
                 id="hero-pet"
-                src="/companion/idle.png"
-                alt="Q版小鲸"
-              /><span class="pose-tag" id="pose-label">小鲸在这里</span>
+                src="/renderer?preview=1"
+                title="动态小鲸"
+              ></iframe><span class="pose-tag" id="pose-label">小鲸在这里</span>
             </div>
           </div>
           <div class="status-strip">
@@ -208,7 +208,7 @@
           </div>
           <section class="reply-card">
             <div class="reply-avatar">
-              <img src="/companion/talk.png" alt="" />
+              <img src="/coopanion/whale/thumbs/deepseek.png" alt="" />
             </div>
             <div class="reply-content">
               <div class="reply-title">
@@ -231,26 +231,26 @@
           <div class="page-heading">
             <span class="eyebrow">A SMALL WHALE, A LITTLE CLOSER</span>
             <h1>桌面上的小鲸</h1>
-            <p>是会眨眼、会吃饭，也会被戳得气鼓鼓的小小鲸鱼娘。</p>
+            <p>视线、头发和鲸鱼尾巴，一起回应你的互动。</p>
           </div>
           <div class="companion-layout">
             <section class="companion-stage">
-              <span class="stage-label">Q版 · 18 种姿态</span>
+              <span class="stage-label">Q版 · 分层动态模型</span>
               <div class="stage-glow"></div>
-              <img
+              <iframe
                 id="stage-pet"
                 class="companion-image"
-                src="/companion/idle.png"
-                alt="Q版小鲸动作预览"
-              />
+                src="/renderer?preview=1"
+                title="动态模型预览"
+              ></iframe>
               <div class="stage-ground"></div>
               <strong id="stage-pose">待机</strong>
               <p>轻点互动 · 双击打开小窝 · 滚轮调节大小</p>
               <div class="interaction-row">
                 <button class="button secondary small" data-pose="love">
                   摸摸头</button
-                ><button class="button secondary small" data-pose="eat">
-                  喂口白饭</button
+                ><button class="button secondary small" data-pose="hop">
+                  蹦一下</button
                 ><button class="button secondary small" data-pose="wave">
                   打招呼
                 </button>
@@ -277,7 +277,7 @@
                 <option value="balanced">刚刚好 · 偶尔动一动</option>
                 <option value="lively">活泼一点 · 多些小动作</option></select
               ><label class="switch-row"
-                ><span>轻柔动画<small>减慢动作，并关闭随机小动作</small></span
+                ><span>轻柔动画<small>关闭自由活动，减少空闲动作</small></span
                 ><input
                   id="reduced-motion"
                   type="checkbox"
@@ -287,7 +287,13 @@
                 ><input id="bubbles" type="checkbox" role="switch" /><span
                   class="switch-track"
                 ></span></label
-              ><button id="save-appearance" class="button primary">
+              >
+              <label class="field-label" for="pet-scheme">配色</label><select id="pet-scheme"><option value="deepseek">DeepSeek · 原版蓝</option><option value="harness">Harness · 黑</option><option value="chatgpt">ChatGPT · 银白</option><option value="claude">Claude · 暖橙</option><option value="gemini">Gemini · 彩色</option><option value="qwen">千问 · 紫</option><option value="kimi">Kimi · 黑蓝</option><option value="minimax">MiniMax · 玫红</option></select>
+              <label class="field-label" for="pet-outfit">服装</label><select id="pet-outfit"><option value="maid">女仆装</option><option value="cape">冬装斗篷</option><option value="crew">店员装</option></select>
+              <label class="field-label" for="render-fps">动画帧率</label><select id="render-fps"><option value="30">30 FPS · 均衡</option><option value="60">60 FPS · 流畅</option></select>
+              <label class="switch-row"><span>透明区域鼠标穿透<small>只有角色和气泡接收点击</small></span><input id="input-passthrough" type="checkbox" role="switch"><span class="switch-track"></span></label>
+              <div id="renderer-warning" class="error-banner" role="status" hidden></div>
+              <button id="save-appearance" class="button primary">
                 保存陪伴偏好
               </button>
             </section>
@@ -300,8 +306,7 @@
           </div>
           <div class="pose-grid" id="pose-grid"></div>
           <p class="fine attribution">
-            角色素材：bauerelizabeth07139 / dsh-pet-dafeiyu · 桌宠引擎：LINNoot
-            / dsh-co-pet
+            动态模型与行为：Pal-AI-Lab / Coopanion · 保留上游许可及素材声明
           </p>
         </section>
         <section class="page" id="page-voice" hidden>
@@ -337,6 +342,7 @@
                 ><button id="test-voice" class="button secondary">
                   检测服务
                 </button>
+                <button id="preview-voice" class="button secondary">试听当前声线</button>
               </div>
               <div id="voice-result" class="soft-note">
                 <i data-icon="info"></i
@@ -344,7 +350,7 @@
               </div>
             </section>
             <section class="voice-story">
-              <img src="/companion/sing.png" alt="哼歌的小鲸" />
+              <img src="/coopanion/whale/thumbs/deepseek.png" alt="小鲸" />
               <h2>文字在这里，变成声音。</h2>
               <p>
                 小鲸回复 → 本地 Feiyu 合成 → 电脑播放。<br />新台词到来时会打断旧的本机播放。
@@ -371,7 +377,7 @@
             </div>
             <span>↔</span>
             <div>
-              <img src="/companion/think.png" alt="" /><strong>小鲸</strong
+              <img src="/coopanion/whale/thumbs/deepseek.png" alt="" /><strong>小鲸</strong
               ><small>AstrBot 对话与人格</small>
             </div>
             <span>→</span>

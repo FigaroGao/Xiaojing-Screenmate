@@ -29,26 +29,8 @@ function svg(name) {
 document
   .querySelectorAll("[data-icon]")
   .forEach((el) => (el.innerHTML = svg(el.dataset.icon)));
-const poses = {
-  idle: "待机",
-  blink: "眨眼",
-  wave: "挥手",
-  happy: "开心",
-  love: "比心",
-  think: "思考",
-  eat: "吃白饭",
-  cheer: "欢呼",
-  talk: "说话",
-  surprise: "惊讶",
-  angry: "气鼓鼓",
-  sad: "委屈",
-  sleep: "小憩",
-  sing: "哼歌",
-  basin: "顶铁盆",
-  walk1: "迈步",
-  walkpass: "轻快走路",
-  walk2: "走路",
-};
+let poses = {};
+let latestStatus = null;
 let token = "",
   enabled = false,
   poller = null,
@@ -58,7 +40,7 @@ let token = "",
 const editing = { watch: false, appearance: false, voice: false };
 for (const id of ["interval", "bbox"])
   $(id).addEventListener("input", () => (editing.watch = true));
-for (const id of ["pet-size", "activity", "reduced-motion", "bubbles"])
+for (const id of ["pet-size", "activity", "reduced-motion", "bubbles", "pet-scheme", "pet-outfit", "render-fps", "input-passthrough"])
   $(id).addEventListener("input", () => (editing.appearance = true));
 for (const id of ["voice-url", "voice-key", "voice-style"])
   $(id).addEventListener("input", () => (editing.voice = true));
@@ -102,6 +84,8 @@ async function connect(value) {
   $("pair-error").textContent = "";
   try {
     const status = await api("status");
+    poses = (await api("companion/catalog")).actions;
+    buildPoseGrid();
     $("pairing").hidden = true;
     $("app").hidden = false;
     $("pair-token").value = "";
@@ -119,6 +103,7 @@ $("pair-form").addEventListener("submit", (e) => {
   connect($("pair-token").value);
 });
 function apply(status, initial = false) {
+  latestStatus = status;
   enabled = status.enabled;
   $("watch-toggle").disabled = false;
   $("watch-state").classList.toggle("watching", enabled);
@@ -164,16 +149,11 @@ function apply(status, initial = false) {
       "收到",
     );
   }
-  const pose = status.companion?.pose || "idle";
-  if (pose !== lastPose && poses[pose]) {
-    lastPose = pose;
-    for (const id of ["hero-pet", "stage-pet"])
-      $(id).src = "/companion/" + pose + ".png";
-    $("pose-label").textContent = status.companion?.ready
-      ? "小鲸正在" + poses[pose]
-      : "小鲸在这里";
-    $("stage-pose").textContent = poses[pose];
-  }
+  $("pose-label").textContent=status.companion?.ready?'小鲸 · '+status.companion.label:'动态模型等待载入';
+  $("stage-pose").textContent=status.companion?.label||'待机';
+  $("renderer-warning").hidden=!status.companion?.error;
+  $("renderer-warning").textContent=status.companion?.error||'';
+  updatePreviews(status);
   if (initial || !editing.watch) {
     $("interval").value = status.interval;
     $("interval-display").textContent = status.interval;
@@ -189,6 +169,10 @@ function apply(status, initial = false) {
     $("activity").value = p.activity || "balanced";
     $("reduced-motion").checked = p.reduced_motion || false;
     $("bubbles").checked = p.bubbles !== false;
+    $("pet-scheme").value=p.pet_scheme||'deepseek';
+    $("pet-outfit").value=p.pet_outfit||'maid';
+    $("render-fps").value=p.render_fps||30;
+    $("input-passthrough").checked=p.input_passthrough!==false;
     document.body.classList.toggle("reduced-motion", p.reduced_motion || false);
   }
   if (initial || !editing.voice) {
@@ -326,6 +310,10 @@ $("save-appearance").onclick = action(async () => {
       activity: $("activity").value,
       reduced_motion: reduced,
       bubbles: $("bubbles").checked,
+      pet_scheme: $("pet-scheme").value,
+      pet_outfit: $("pet-outfit").value,
+      render_fps: Number($("render-fps").value),
+      input_passthrough: $("input-passthrough").checked,
     },
     "陪伴偏好已保存",
   );
@@ -335,7 +323,7 @@ $("save-appearance").onclick = action(async () => {
 async function performPose(pose) {
   await api("pet/action", { pose });
   for (const id of ["hero-pet", "stage-pet"])
-    $(id).src = "/companion/" + pose + ".png";
+    $(id).contentWindow.postMessage({type:'companion-action',word:pose},location.origin);
   $("stage-pose").textContent = poses[pose];
   toast("让小鲸" + poses[pose] + "一下");
 }
@@ -345,19 +333,23 @@ document
     (button) =>
       (button.onclick = action(() => performPose(button.dataset.pose))),
   );
+function buildPoseGrid(){
+$("pose-grid").textContent='';
 for (const [pose, label] of Object.entries(poses)) {
   const button = document.createElement("button");
   button.className = "pose-button";
-  button.innerHTML =
-    '<img src="/companion/' +
-    pose +
-    '.png" alt="" loading="lazy"><span>' +
-    label +
-    "</span>";
+  button.innerHTML = svg(pose==='love'?'heart':'play');
+  const text=document.createElement('span');text.textContent=label;button.appendChild(text);
   button.setAttribute("aria-label", "预览动作：" + label);
   button.onclick = action(() => performPose(pose));
   $("pose-grid").appendChild(button);
 }
+}
+function updatePreviews(status){
+  const state={...status.preferences,activity:'quiet',speaking:status.companion?.speaking||false,mouth:status.companion?.mouth||0};
+  for(const id of ['hero-pet','stage-pet'])$(id).contentWindow.postMessage({type:'companion-state',state},location.origin);
+}
+for(const id of ['hero-pet','stage-pet'])$(id).addEventListener('load',()=>{if(latestStatus)updatePreviews(latestStatus)});
 async function saveVoice() {
   const values = {
     voice_url: $("voice-url").value.trim(),
@@ -378,6 +370,11 @@ $("test-voice").onclick = action(async () => {
   $("voice-result").querySelector("span").textContent = "正在检查声音服务…";
   await api("voice/test", {});
   await refresh();
+});
+$("preview-voice").onclick = action(async () => {
+  await saveVoice();
+  await api("voice/preview", {});
+  toast("已开始本地合成，首次加载模型需要一些时间");
 });
 $("server-address").textContent = location.origin;
 $("copy-address").onclick = action(async () => {

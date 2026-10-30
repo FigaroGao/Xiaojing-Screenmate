@@ -1,4 +1,9 @@
 @charset "UTF-8";
+iframe.companion-image{border:0;background:transparent;position:relative;z-index:1;width:230px;height:245px;animation:none!important;filter:none!important}
+.hero-companion>iframe{align-self:flex-end;pointer-events:none}
+.companion-stage>iframe{height:280px;max-width:100%;width:280px}
+iframe.pair-renderer{width:280px;height:300px;max-width:100%;border:0;pointer-events:none}
+.pose-button>svg{width:17px;height:17px;opacity:.6}.pose-button{min-height:64px}
 :root {
   font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
   color: #243f47;

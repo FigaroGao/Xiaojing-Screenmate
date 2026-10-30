@@ -11,7 +11,7 @@ def test_existing_pet_renderer(tmp_path, monkeypatch):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from screenmate.core import Engine
     from screenmate.voice import FeiyuVoice
-    from screenmate.pet import Pet
+    from screenmate.legacy_pet import Pet
     engine = Engine(tmp_path)
     pet = Pet(engine, FeiyuVoice(engine.config), "http://127.0.0.1:17860", instance_key="screenmate-test-" + __import__('uuid').uuid4().hex)
     try:
@@ -25,9 +25,9 @@ def test_existing_pet_renderer(tmp_path, monkeypatch):
         assert pet.widget._model.phrase == "在这里陪你"
         assert pet.widget._pet.name == "xiaojing-chibi"
         assert len(pet.widget._pet.frames["idle"]) > 1
-        engine.pet_action("eat")
+        engine.pet_action("love")
         pet.refresh()
-        assert engine.pet_state["pose"] == "eat"
+        assert engine.pet_state["pose"] == "love"
         engine.configure({"pet_size": 180, "bubbles": False})
         pet.refresh()
         assert pet.widget.width() == 180

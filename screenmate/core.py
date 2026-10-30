@@ -16,7 +16,8 @@ from PIL import ImageGrab
 DEFAULTS = dict(interval=15.0, mode="mixed", skip_unchanged=True,
                 monitor_bbox=None, text_ttl=45, observation_ttl=90,
                 voice_url="http://127.0.0.1:9880", voice_key="", voice_style="cute",
-                pet_size=218, activity="balanced", reduced_motion=False, bubbles=True)
+                pet_size=218, activity="balanced", reduced_motion=False, bubbles=True,
+                pet_scheme="deepseek", pet_outfit="maid", render_fps=30, input_passthrough=True)
 
 
 class Engine:
@@ -45,6 +46,7 @@ class Engine:
         self.capture = capture or self._capture
         self.capture_guard = threading.Lock()
         self.pet_commands = deque(maxlen=16)
+        self.voice_commands = deque(maxlen=1)
         self.pet_state = {"pose": "idle", "label": "待机", "ready": False}
         self.bridge = {"connected_at": None}
         self.voice_status = {"checked": False, "available": False}
@@ -67,7 +69,12 @@ class Engine:
         activity = values.get("activity", self.config["activity"])
         if activity not in ("quiet", "balanced", "lively"):
             raise ValueError("未知活跃程度")
-        for key in ("skip_unchanged", "reduced_motion", "bubbles"):
+        from .coopanion import SCHEMES, OUTFITS
+        if values.get("pet_scheme", self.config["pet_scheme"]) not in SCHEMES or values.get("pet_outfit", self.config["pet_outfit"]) not in OUTFITS:
+            raise ValueError("未知配色或服装")
+        if values.get("render_fps", self.config["render_fps"]) not in (30, 60):
+            raise ValueError("动画帧率须为30或60")
+        for key in ("skip_unchanged", "reduced_motion", "bubbles", "input_passthrough"):
             if key in values and type(values[key]) is not bool:
                 raise ValueError("需要布尔值")
         if values.get("voice_style", self.config["voice_style"]) not in ("cute", "gentle"):
@@ -95,7 +102,7 @@ class Engine:
                 if key in values:
                     self.config[key] = str(values[key])
             self.config.update(pet_size=pet_size, activity=activity)
-            for key in ("reduced_motion", "bubbles"):
+            for key in ("reduced_motion", "bubbles", "input_passthrough", "pet_scheme", "pet_outfit", "render_fps"):
                 if key in values:
                     self.config[key] = values[key]
             self.save()
@@ -211,14 +218,14 @@ class Engine:
                         skip_unchanged=self.config["skip_unchanged"], monitor_bbox=self.config["monitor_bbox"],
                         error=self.error, sequence=self.sequence, reply=self.reply,
                         companion=dict(self.pet_state), bridge=dict(self.bridge), voice=dict(self.voice_status),
-                        preferences={k: self.config[k] for k in ("pet_size", "activity", "reduced_motion", "bubbles", "voice_url", "voice_style")},
+                        preferences={k: self.config[k] for k in ("pet_size", "activity", "reduced_motion", "bubbles", "voice_url", "voice_style", "pet_scheme", "pet_outfit", "render_fps", "input_passthrough")},
                         voice_configured=bool(self.config["voice_key"]),
                         observation_time=self.observation["captured_at"] if self.latest() else None,
                         has_observation=self.latest() is not None)
 
     def pet_action(self, pose):
-        from .companion_assets import POSES
-        if pose not in POSES:
+        from .coopanion import ACTIONS
+        if pose not in ACTIONS:
             raise ValueError("未知动作")
         with self.lock:
             self.pet_commands.append(pose)

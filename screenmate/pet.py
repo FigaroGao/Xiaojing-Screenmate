@@ -1,221 +1,285 @@
-"""Q版角色 + existing dsh-co-pet renderer, with Screenmate interaction glue."""
-import ctypes
-import random
+"""Coopanion's unmodified rig hosted in a transparent native Qt WebEngine window."""
+import json
+import math
 import subprocess
-import sys
 import time
-from pathlib import Path
 
-from .companion_assets import CHIBI_REVISION, POSES, ROOT, load_companion
+from PySide6.QtCore import QObject, QSharedMemory, QTimer, Qt, QUrl, QRect, Slot, Signal
+from PySide6.QtGui import QColor, QCursor, QIcon, QRegion, QDesktopServices
+from PySide6.QtWebChannel import QWebChannel
+from PySide6.QtWebEngineWidgets import QWebEngineView
+from PySide6.QtWebEngineCore import QWebEngineProfile, QWebEngineUrlRequestInterceptor
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-UPSTREAM_REVISION = "b394cdacca07526a36a36373cb11bec603b74651"
+from .coopanion import SOURCE, REVISION, WEB, ACTIONS, hit_test, transfer_delta
+from .desktop import WindowIntegration
+from .panel import ControlPanel, LocalPage
+
+
+class LocalRequests(QWebEngineUrlRequestInterceptor):
+    def __init__(self, origin, parent):
+        super().__init__(parent)
+        self.origin = QUrl(origin)
+
+    def interceptRequest(self, info):
+        url = info.requestUrl()
+        local = (url.scheme(), url.host(), url.port()) == (self.origin.scheme(), self.origin.host(), self.origin.port())
+        if not local and url.scheme() not in ("qrc", "data", "blob"):
+            info.block(True)
+
+
+class RendererBridge(QObject):
+    state = Signal(str)
+    action = Signal(str)
+    pointer = Signal(str)
+    transfer = Signal(str)
+    home = Signal()
+
+    def __init__(self, owner):
+        super().__init__(owner.widget)
+        self.owner = owner
+
+    @Slot(result=str)
+    def initial(self):
+        payload = self.owner.payload()
+        payload["position"] = self.owner.position
+        return json.dumps(payload, ensure_ascii=False)
+
+    @Slot()
+    def ready(self):
+        self.owner.ready = True
+        self.owner.widget.show()
+        self.owner.widget.setWindowOpacity(1)
+        self.owner.capture_excluded = self.owner.integration.exclude()
+        self.owner.engine.pet_state.update(ready=True, error="", renderer="coopanion")
+
+    @Slot(str)
+    def report(self, value):
+        self.owner.report(value)
+
+    @Slot(str)
+    def failed(self, error):
+        self.owner.ready = False
+        self.owner.integration.passthrough(True)
+        self.owner.engine.pet_state = {"ready": False, "renderer": "coopanion", "pose": "neutral", "label": "渲染失败", "error": "动态模型暂时无法加载，可使用兼容模式"}
+        self.owner.widget.hide()
+
+    @Slot()
+    def openPanel(self):
+        self.owner.open_panel()
+
+    @Slot()
+    def menu(self):
+        self.owner.menu.popup(QCursor.pos())
+
+    @Slot(int)
+    def resizePet(self, delta):
+        self.owner.engine.configure({"pet_size": max(100, min(400, self.owner.engine.config["pet_size"]+delta))})
 
 
 class Pet:
     def __init__(self, engine, voice, url, instance_key="xiaojing-screenmate-pet"):
-        directory = ROOT / "runtime/dsh-co-pet"
-        for source, revision in ((directory, UPSTREAM_REVISION), (ROOT / "runtime/chibi-dafeiyu", CHIBI_REVISION)):
-            if not source.exists():
-                raise RuntimeError("请先运行 python tools/setup_pet.py 安装现有桌宠与Q版素材")
-            actual = subprocess.check_output(["git", "-C", str(source), "rev-parse", "HEAD"], text=True).strip()
-            if actual != revision:
-                raise RuntimeError("桌宠依赖版本不同，请先检查；不自动覆盖")
-        sys.path.insert(0, str(directory / "pet"))
-        import pet_app as upstream
-        import state_listener
-        from pet_loader import Pet as AssetPet, pil_to_qimage
-        from PySide6.QtCore import QSharedMemory, QTimer, Qt, QPoint, QPropertyAnimation, QEasingCurve
-        from PySide6.QtGui import QPixmap
-        from PySide6.QtWidgets import QApplication, QSystemTrayIcon
-        # Import WebEngine before creating QApplication (shared OpenGL contexts).
-        from .panel import ControlPanel
-
-        upstream._log = state_listener._log = lambda *args: None
-        upstream.CONFIG_FILE = engine.root / "pet.private.json"
+        if not (WEB / "whale/figure.js").is_file():
+            raise RuntimeError("请先运行 python tools/setup_pet.py 安装动态模型")
+        actual = subprocess.check_output(["git", "-C", str(SOURCE), "rev-parse", "HEAD"], text=True).strip()
+        if actual != REVISION:
+            raise RuntimeError("动态模型版本不同，请先检查；不自动覆盖")
         if QApplication.instance() is None:
             QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
-        self.app = QApplication.instance() or QApplication(sys.argv)
+        self.app = QApplication.instance() or QApplication([])
         self.singleton = QSharedMemory(instance_key)
         if not self.singleton.create(1):
             raise RuntimeError("小鲸桌宠已经运行")
         self.app.setQuitOnLastWindowClosed(False)
-        upstream.apply_codex_style(self.app, [directory / "pet", directory / "pet/assets"])
-        config = upstream.load_config(upstream.CONFIG_FILE)
-        config.update(pet="xiaojing-chibi", fps=12, scale=engine.config["pet_size"] / 218)
-        asset = load_companion(AssetPet)
-        controller = self
-
-        class ConnectedPet(upstream.PetWidget):
-            def _build_pixmaps(self):
-                self._pixmaps = {state: [QPixmap.fromImage(pil_to_qimage(frame)) for frame in frames]
-                                 for state, frames in self._pet.frames.items()}
-
-            def _on_circle_clicked(self):
-                engine.set_enabled(False)
-                voice.stop()
-
-            def mousePressEvent(self, event):
-                controller.last_interaction = time.monotonic()
-                if controller.motion is not None:
-                    controller.motion.stop()
-                self.press_at = event.globalPosition().toPoint()
-                super().mousePressEvent(event)
-
-            def mouseReleaseEvent(self, event):
-                short_click = hasattr(self, "press_at") and (event.globalPosition().toPoint() - self.press_at).manhattanLength() < 6
-                super().mouseReleaseEvent(event)
-                if short_click and event.button() == Qt.MouseButton.LeftButton:
-                    controller.interact()
-
-            def mouseDoubleClickEvent(self, event):
-                controller.open_panel()
-                event.accept()
-
-            def enterEvent(self, event):
-                if hasattr(controller, "widget") and not self._dragging and time.monotonic() > controller.hover_after:
-                    controller.hover_after = time.monotonic() + 8
-                    controller.play("wave", 1.8)
-
-            def wheelEvent(self, event):
-                size = max(100, min(400, engine.config["pet_size"] + (10 if event.angleDelta().y() > 0 else -10)))
-                engine.configure({"pet_size": size})
-                event.accept()
-
         self.engine, self.voice, self.url = engine, voice, url
-        self.panel_type = ControlPanel
+        self.ready = False
         self.panel = None
-        self.pose, self.pose_until = "idle", 0.0
-        self.last_interaction = time.monotonic()
-        self.next_idle = time.monotonic() + random.uniform(9, 16)
-        self.hover_after = 0
-        self.click_times = []
-        self.motion = None
-        self.motion_type = QPropertyAnimation
-        self.point_type = QPoint
-        self.easing = QEasingCurve.Type.InOutSine
-        self.last_reply = None
-        self.last_state = None
-        self.last_size = engine.config["pet_size"]
-        self.next_stroll = time.monotonic() + random.uniform(30, 50)
-        self.widget = ConnectedPet(asset, config, [asset])
-        self.widget.setWindowTitle("小鲸 · Q版桌宠")
-        menu = self.widget._menu
-        menu.addSeparator()
-        menu.addAction("打开小鲸的小窝", self.open_panel)
-        menu.addAction("开启持续陪看", lambda: engine.set_enabled(True))
-        menu.addAction("暂停观看", lambda: engine.set_enabled(False))
-        menu.addAction("复制配对码", lambda: self.app.clipboard().setText(engine.config["token"]))
-        menu.addAction("停止说话", voice.stop)
-        self.tray = QSystemTrayIcon(self.widget.current_icon(), self.app)
-        self.tray.setToolTip("小鲸 · 双击打开小窝")
-        self.tray.setContextMenu(menu)
-        self.tray.activated.connect(lambda reason: self.open_panel() if reason == QSystemTrayIcon.ActivationReason.DoubleClick else None)
-        self.tray.show()
+        self.layout = {}
+        self.position_path = engine.root / "companion-position.private.json"
+        self.position = {}
+        try:
+            saved = json.loads(self.position_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = {}
+        self.screen = next((s for s in self.app.screens() if s.name()==saved.get("screen")), self.app.primaryScreen())
+        if saved.get("screen") == self.screen.name():
+            if all(isinstance(saved.get(k), (int, float)) and math.isfinite(saved[k]) for k in ("x", "y")):
+                self.position = {k: saved[k] for k in ("x", "y")}
+        self.widget = QWebEngineView()
+        self.widget.setWindowTitle("小鲸 · 动态桌宠")
+        self.widget.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool | Qt.WindowType.WindowStaysOnTopHint)
+        self.widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.widget.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.widget.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.widget.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
+        self.widget.setGeometry(self.screen.availableGeometry())
+        self.widget.setMask(QRegion(QRect(0, 0, 1, 1)))
+        self.profile = QWebEngineProfile(self.widget)  # off-the-record; no persisted cookies or browsing history
+        self.interceptor = LocalRequests(url, self.profile)
+        self.profile.setUrlRequestInterceptor(self.interceptor)
+        self.page = LocalPage(url, self.profile)
+        self.page.setBackgroundColor(QColor(0, 0, 0, 0))
+        self.widget.setPage(self.page)
+        self.channel = QWebChannel(self.page)
+        self.bridge = RendererBridge(self)
+        self.channel.registerObject("host", self.bridge)
+        self.page.setWebChannel(self.channel)
+        self.integration = WindowIntegration(self.widget)
+        # A zero-opacity WebEngine window may suspend requestAnimationFrame before ready.
+        # Transparent page + a tiny initial mask keep the desktop unobstructed while it loads.
+        self.widget.setWindowOpacity(1)
         self.widget.show()
-        self.capture_excluded = self.exclude_from_capture()
+        self.integration.passthrough(True)
+        self.capture_excluded = self.integration.exclude()
+        self.last_payload = None
+        self.last_reply = None
+        self.last_save = 0
+        self.last_position = None
+        self.refresh_at = 0
+        self.menu = QMenu()
+        self.menu.addAction("打开小鲸的小窝", self.open_panel)
+        self.menu.addAction("开启持续陪看", lambda: engine.set_enabled(True))
+        self.menu.addAction("暂停观看", lambda: engine.set_enabled(False))
+        self.menu.addSeparator()
+        self.menu.addAction("让小鲸回到屏幕上", self.reset_position)
+        self.menu.addAction("显示 / 隐藏桌宠", self.toggle_visible)
+        self.menu.addAction("停止说话", voice.stop)
+        self.menu.addAction("复制配对码", lambda: self.app.clipboard().setText(engine.config["token"]))
+        self.menu.addSeparator()
+        self.menu.addAction("退出", self.app.quit)
+        icon = QIcon(str(WEB / "whale/thumbs/deepseek.png"))
+        self.tray = QSystemTrayIcon(icon, self.app)
+        self.tray.setToolTip("小鲸 · 动态鲸鱼娘")
+        self.tray.setContextMenu(self.menu)
+        self.tray.activated.connect(lambda reason: self.open_panel() if reason==QSystemTrayIcon.ActivationReason.DoubleClick else None)
+        self.tray.show()
+        self.app.screenRemoved.connect(lambda _: QTimer.singleShot(0, self.rehome))
+        self.app.screenAdded.connect(lambda s: s.availableGeometryChanged.connect(lambda _: self.rehome()))
+        for screen in self.app.screens():
+            screen.availableGeometryChanged.connect(lambda _: self.rehome())
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh)
-        self.timer.start(160)
+        self.timer.start(20)
         self.app.aboutToQuit.connect(voice.stop)
-        self.play("wave", 2.0)
-        self.refresh()
+        self.widget.load(QUrl(url+"/renderer"))
+        engine.pet_state = {"ready": False, "renderer": "coopanion", "pose": "neutral", "label": "正在载入", "error": ""}
+        QTimer.singleShot(30000, lambda: self.bridge.failed("Renderer did not become ready") if not self.ready else None)
+
+    def payload(self):
+        config = self.engine.config
+        status = self.engine.status()
+        phase = status["bridge"].get("phase")
+        return {k: config[k] for k in ("pet_size", "activity", "reduced_motion", "bubbles", "pet_scheme", "pet_outfit", "render_fps")} | {
+            "thinking": phase in ("analyzing", "chat") and time.time()-status["bridge"].get("connected_at", 0)<120,
+            "speaking": self.voice.speaking, "mouth": self.voice.mouth_level(), "reply": status["reply"]}
+
+    def report(self, value):
+        if len(value)>20000:
+            return
+        try:
+            data = json.loads(value)
+            box = data["box"]
+            if not all(isinstance(box.get(k), (int,float)) and math.isfinite(box[k]) and abs(box[k])<100000 for k in ("x","y","w","h")):
+                return
+            if len(data.get("hit", []))>20:
+                return
+            region = QRegion(QRect(math.floor(box["x"])-40, math.floor(box["y"])-60, max(1,math.ceil(box["w"])+80), max(1,math.ceil(box["h"])+100)))
+            bubble = data.get("bubbleRect")
+            if bubble:
+                region |= QRegion(QRect(int(bubble["x"]), int(bubble["y"]), int(bubble["w"]), int(bubble["h"])))
+            self.widget.setMask(region)
+            self.layout = data
+            action = data.get("action") or "neutral"
+            mode = data.get("mode", "idle")
+            label = ACTIONS.get(action, "陪伴") if action!="neutral" else {"idle":"待机","walk":"散步","run":"跑步","drag":"被拎起","air":"落下","sleep":"小憩","sit":"坐下"}.get(mode,"活动中")
+            self.engine.pet_state.update(ready=self.ready, renderer="coopanion", pose=action, label=label, phase=mode, capture_excluded=self.capture_excluded, error="")
+            if not data.get("pressing") and not data.get("moving") and time.monotonic()-self.last_save>2:
+                position = {"screen": self.screen.name(), "x": round(data["x"], 2), "y": round(data.get("y", self.widget.height()-8), 2)}
+                if position != self.last_position:
+                    tmp = self.position_path.with_suffix(".tmp")
+                    tmp.write_text(json.dumps(position), encoding="utf-8")
+                    tmp.replace(self.position_path)
+                    self.last_position = position
+                self.last_save = time.monotonic()
+        except (ValueError, TypeError, KeyError, OSError):
+            return
+
+    def refresh(self):
+        if not self.ready:
+            return
+        cursor = QCursor.pos()
+        pressing = self.layout.get("pressing", False)
+        down = bool(QApplication.mouseButtons() & Qt.MouseButton.LeftButton)
+        if pressing:
+            target = self.app.screenAt(cursor)
+            if target and target != self.screen:
+                old = self.widget.geometry().topLeft()
+                self.screen = target
+                self.widget.setGeometry(target.availableGeometry())
+                new = self.widget.geometry().topLeft()
+                dx,dy = transfer_delta((old.x(),old.y()),(new.x(),new.y()))
+                self.bridge.transfer.emit(json.dumps({"dx": dx,"dy":dy}))
+                self.capture_excluded = self.integration.exclude()
+            point = self.widget.mapFromGlobal(cursor)
+            self.bridge.pointer.emit(json.dumps({"x":point.x(),"y":point.y(),"down":down}))
+        point = self.widget.mapFromGlobal(cursor)
+        transparent = self.engine.config["input_passthrough"] and not pressing and not hit_test(self.layout,point.x(),point.y())
+        self.integration.passthrough(transparent)
+        now = time.monotonic()
+        if now < self.refresh_at:
+            return
+        self.refresh_at = now+.08
+        with self.engine.lock:
+            command = self.engine.pet_commands.popleft() if self.engine.pet_commands else None
+            speech = self.engine.voice_commands.popleft() if self.engine.voice_commands else None
+        if speech:
+            self.voice.say(speech)
+        if command:
+            self.bridge.action.emit(command)
+        reply = self.engine.reply
+        if reply and reply["at"] != self.last_reply:
+            self.last_reply = reply["at"]
+            if self.engine.config.get("voice_key"):
+                self.voice.say(reply["text"])
+        payload = json.dumps(self.payload(), ensure_ascii=False)
+        self.engine.pet_state.update(speaking=self.voice.speaking,mouth=self.voice.mouth_level())
+        if self.voice.error:
+            self.engine.voice_status = {"checked":True,"available":False,"message":self.voice.error}
+        elif self.voice.generating:
+            self.engine.voice_status = {"checked":True,"available":True,"message":"正在本地合成语音，首次加载需要一些时间…"}
+        elif self.voice.speaking:
+            self.engine.voice_status = {"checked":True,"available":True,"message":"正在播放本地语音"}
+        elif self.engine.voice_status.get("message") in ("正在播放本地语音", "正在本地合成语音，首次加载需要一些时间…"):
+            self.engine.voice_status = {"checked":True,"available":True,"message":"本地语音播放完成"}
+        if payload != self.last_payload:
+            self.last_payload = payload
+            self.bridge.state.emit(payload)
 
     def open_panel(self):
         if self.panel is None:
-            self.panel = self.panel_type(self.url, self.engine.config["token"])
+            self.panel = ControlPanel(self.url,self.engine.config["token"])
         self.panel.showNormal()
         self.panel.raise_()
         self.panel.activateWindow()
 
-    def exclude_from_capture(self):
-        results = [bool(ctypes.windll.user32.SetWindowDisplayAffinity(int(w.winId()), 0x11))
-                   for w in (self.widget, self.widget._bubble)]
-        return all(results)
+    def reset_position(self):
+        self.screen = self.app.primaryScreen()
+        self.widget.setGeometry(self.screen.availableGeometry())
+        self.widget.show()
+        self.bridge.home.emit()
+        self.capture_excluded = self.integration.exclude()
 
-    def play(self, pose, seconds=3):
-        if pose not in POSES:
-            return
-        self.pose = pose
-        self.pose_until = time.monotonic() + seconds
-        self.widget.set_state(pose, "manual")
-        self.engine.pet_state = dict(pose=pose, label=POSES[pose], ready=True)
+    def rehome(self):
+        if self.screen not in self.app.screens():
+            self.screen = self.app.primaryScreen()
+        self.widget.setGeometry(self.screen.availableGeometry())
+        self.bridge.home.emit()
+        self.capture_excluded = self.integration.exclude()
 
-    def interact(self):
-        now = time.monotonic()
-        self.last_interaction = now
-        self.click_times = [t for t in self.click_times if now - t < 2] + [now]
-        self.play("angry" if len(self.click_times) >= 3 else random.choice(("happy", "love", "cheer")), 2.5)
-
-    def stroll(self):
-        if self.widget._dragging or not self.widget.isVisible():
-            return
-        geo = self.widget.screen().availableGeometry()
-        direction = random.choice((-1, 1))
-        target_x = max(geo.left()+10, min(self.widget.x()+direction*70, geo.right()-self.widget.width()-10))
-        direction = 1 if target_x > self.widget.x() else -1
-        self.play("walkpass", 2.6)
-        self.widget.set_state("running-right" if direction > 0 else "running-left", "manual")
-        self.motion = self.motion_type(self.widget, b"pos")
-        self.motion.setDuration(2400)
-        self.motion.setStartValue(self.widget.pos())
-        self.motion.setEndValue(self.point_type(target_x, self.widget.y()))
-        self.motion.setEasingCurve(self.easing)
-        self.motion.start()
-
-    def refresh(self):
-        now = time.monotonic()
-        status = self.engine.status()
-        config = self.engine.config
-        if config["pet_size"] != self.last_size:
-            self.last_size = config["pet_size"]
-            self.widget._config["scale"] = self.last_size / 218
-            self.widget._resize_to_pet()
-            # Keep the pet within the screen after growing it.
-            geo = self.widget.screen().availableGeometry()
-            self.widget.move(max(geo.left(), min(self.widget.x(), geo.right()-self.widget.width())),
-                             max(geo.top(), min(self.widget.y(), geo.bottom()-self.widget.height())))
-        self.widget._show_bubble = config["bubbles"]
-        self.widget._timer.setInterval(250 if config["reduced_motion"] else 83)
-        with self.engine.lock:
-            command = self.engine.pet_commands.popleft() if self.engine.pet_commands else None
-        if command:
-            self.last_interaction = now
-            self.play(command, 4)
-        elif self.voice.speaking:
-            if self.pose != "talk":
-                self.play("talk", 0.5)
-            self.pose_until = now + 0.5
-        elif now > self.pose_until and not self.widget._dragging:
-            target = "think" if status["enabled"] else "idle"
-            if not status["enabled"] and now - self.last_interaction > 180 and config["activity"] != "quiet":
-                target = "sleep"
-            if self.pose != target:
-                self.play(target, 0)
-            if config["activity"] != "quiet" and not config["reduced_motion"] and now > self.next_idle:
-                self.play(random.choice(("eat", "basin", "sing", "happy", "think")), random.uniform(3, 5))
-                spacing = (10, 20) if config["activity"] == "lively" else (24, 42)
-                self.next_idle = now + random.uniform(*spacing)
-            if config["activity"] == "lively" and not config["reduced_motion"] and now > self.next_stroll:
-                self.stroll()
-                self.next_stroll = now + random.uniform(45, 80)
-        state = status["enabled"], status["error"], self.voice.speaking, self.voice.error, config["bubbles"]
-        if state != self.last_state:
-            self.last_state = state
-            model = self.widget._model
-            model.title = "小鲸"
-            model.phrase = "正在说话" if self.voice.speaking else ("陪你一起看" if status["enabled"] else "在这里陪你")
-            model.body = status["error"] or self.voice.error or (status["reply"]["text"] if status["reply"] else "双击打开小窝 · 轻点和我互动")
-            model.visible = bool(status["error"] or status["reply"])
-            self.widget._update_bubble()
-        reply = status["reply"]
-        if reply and reply["at"] != self.last_reply:
-            self.last_reply = reply["at"]
-            self.widget._model.body = reply["text"]
-            self.widget._model.visible = True
-            self.widget._update_bubble()
-            self.play("talk", 4)
-            if config.get("voice_key"):
-                self.voice.say(reply["text"])
+    def toggle_visible(self):
+        self.widget.setVisible(not self.widget.isVisible())
+        if self.widget.isVisible():
+            self.capture_excluded = self.integration.exclude()
 
     def run(self):
         self.app.exec()
