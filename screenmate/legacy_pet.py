@@ -179,6 +179,14 @@ class Pet:
         with self.engine.lock:
             command = self.engine.pet_commands.popleft() if self.engine.pet_commands else None
         if command:
+            if isinstance(command,dict):
+                if command['kind']!='action':
+                    self.engine.pet_feedback.feedback(command['id'],'rejected','legacy renderer has no precise movement support')
+                    command=None
+                else:
+                    self.engine.pet_feedback.feedback(command['id'],'started','legacy renderer cannot confirm completion')
+                    command=command['pose']
+        if command:
             self.last_interaction = now
             self.play(command, 4)
         elif self.voice.speaking:
@@ -214,7 +222,7 @@ class Pet:
             self.widget._model.visible = True
             self.widget._update_bubble()
             self.play("talk", 4)
-            if config.get("voice_key"):
+            if self.engine.voice_status.get('state') == 'ready':
                 self.voice.say(reply["text"])
 
     def run(self):

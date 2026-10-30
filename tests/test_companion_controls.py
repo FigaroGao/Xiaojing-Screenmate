@@ -51,8 +51,9 @@ def test_actions_and_connection_status_auth_and_secret_redaction(tmp_path):
     headers = {"Authorization": "Bearer " + engine.config["token"]}
     try:
         assert session.post(base+"/v1/pet/action", json={"pose": "love"}).status_code == 401
+        engine.set_enabled(True)
         assert session.post(base+"/v1/pet/action", headers=headers, json={"pose": "love"}).status_code == 200
-        assert engine.pet_commands.pop() == "love"
+        assert engine.pet_commands.pop()['pose'] == "love"
         assert session.post(base+"/v1/pet/action", headers=headers, json={"pose": "unknown"}).status_code == 400
         assert session.post(base+"/v1/bridge/heartbeat", headers=headers, json={"vision_configured": True}).status_code == 200
         status = session.get(base+"/v1/status", headers=headers)

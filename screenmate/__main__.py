@@ -12,12 +12,13 @@ def main():
     parser.add_argument("--port", type=int, default=17860)
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--open-panel", action="store_true", help="启动后打开原生小窝窗口")
+    parser.add_argument("--open-chat", action="store_true", help="启动后打开桌宠聊天输入框")
     parser.add_argument("--renderer", choices=("coopanion", "sprites"), default="coopanion")
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parents[1] / "runtime")
     args = parser.parse_args()
     engine = Engine(args.data_dir)
-    from .local_voice import start_installed_voice
-    start_installed_voice(engine)
+    from .local_voice import VoiceControl
+    engine.voice_control = VoiceControl(engine)
     server = create_server(engine, args.host, args.port)
     worker = threading.Thread(target=engine.run, daemon=True)
     worker.start()
@@ -39,10 +40,13 @@ def main():
             print(f"Pet excluded from capture: {pet.capture_excluded}", flush=True)
             if args.open_panel:
                 pet.open_panel()
+            if args.open_chat and hasattr(pet,'open_chat'):
+                pet.open_chat()
             pet.run()
     except KeyboardInterrupt:
         pass
     finally:
+        engine.voice_control.close()
         engine.close()
         if server_thread:
             server.shutdown()

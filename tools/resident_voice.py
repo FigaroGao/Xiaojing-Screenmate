@@ -195,6 +195,11 @@ def handler(resident):
         def do_POST(self):
             if not self.authorized():
                 return self.send(401,{'error':'unauthorized'})
+            if self.path == '/v1/shutdown':
+                self.send(200, {'ok':True})
+                # Process exit releases CUDA even while model initialization is active.
+                threading.Timer(.2, lambda: os._exit(0)).start()
+                return
             if self.path!='/v1/speech':
                 return self.send(404,{'error':'not_found'})
             if not resident.ready:

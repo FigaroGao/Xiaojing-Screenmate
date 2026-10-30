@@ -17,7 +17,7 @@ DEFAULTS = dict(interval=15.0, mode="mixed", skip_unchanged=True,
                 monitor_bbox=None, text_ttl=45, observation_ttl=90,
                 voice_url="http://127.0.0.1:9881", voice_key="", voice_style="cute",
                 pet_size=218, activity="balanced", reduced_motion=False, bubbles=True,
-                pet_scheme="deepseek", pet_outfit="maid", render_fps=30, input_passthrough=True)
+                pet_scheme="deepseek", pet_outfit="maid", render_fps=30, input_passthrough=True,pet_avoid_center=True)
 
 
 class Engine:
@@ -47,10 +47,18 @@ class Engine:
         self.capture = capture or self._capture
         self.capture_guard = threading.Lock()
         self.pet_commands = deque(maxlen=16)
+        from .pet_commands import PetCommands
+        self.pet_feedback=PetCommands()
         self.voice_commands = deque(maxlen=1)
         self.pet_state = {"pose": "idle", "label": "待机", "ready": False}
         self.bridge = {"connected_at": None}
+        self.chat_jobs = deque(maxlen=16)
+        self.chat_receipts = {}
+        self.chat_contexts = {}
+        from .sessions import Sessions
+        self.sessions=Sessions(root/'watch-sessions.private.sqlite3')
         self.voice_status = {"checked": False, "available": False}
+        self.last_cached_voice=0
 
     def save(self):
         tmp = self.path.with_suffix(".tmp")
@@ -75,7 +83,7 @@ class Engine:
             raise ValueError("未知配色或服装")
         if values.get("render_fps", self.config["render_fps"]) not in (30, 60):
             raise ValueError("动画帧率须为30或60")
-        for key in ("skip_unchanged", "reduced_motion", "bubbles", "input_passthrough"):
+        for key in ("skip_unchanged", "reduced_motion", "bubbles", "input_passthrough","pet_avoid_center"):
             if key in values and type(values[key]) is not bool:
                 raise ValueError("需要布尔值")
         if values.get("voice_style", self.config["voice_style"]) != "cute":
@@ -103,7 +111,7 @@ class Engine:
                 if key in values:
                     self.config[key] = str(values[key])
             self.config.update(pet_size=pet_size, activity=activity)
-            for key in ("reduced_motion", "bubbles", "input_passthrough", "pet_scheme", "pet_outfit", "render_fps"):
+            for key in ("reduced_motion", "bubbles", "input_passthrough", "pet_scheme", "pet_outfit", "render_fps","pet_avoid_center"):
                 if key in values:
                     self.config[key] = values[key]
             self.save()
@@ -112,6 +120,8 @@ class Engine:
 
     def set_enabled(self, enabled):
         with self.lock:
+            if enabled and not self.enabled:self.sessions.start()
+            if not enabled and self.enabled:self.sessions.end()
             self.enabled = bool(enabled)
             self.generation += 1
             self.observation = None
@@ -119,6 +129,8 @@ class Engine:
             self.last_hash = None
             self.text = None
             self.error = ""
+            self.pet_feedback.cancel()
+            self.pet_commands.clear()
         self.wake.set()
 
     def ingest_text(self, data):
@@ -154,6 +166,7 @@ class Engine:
                 if not self.enabled:
                     return
                 generation, config = self.generation, dict(self.config)
+                self.sessions.touch()
                 text = dict(self.text) if self.text else None
             if text and time.time() - text["received_at"] > config["text_ttl"]:
                 text = None
@@ -184,6 +197,7 @@ class Engine:
                                         text=text if config["mode"] != "vision" else None,
                                         image_base64=image, mime="image/jpeg" if image else None,
                                         source="screenmate", region=config["monitor_bbox"])
+                self.observation['episode_id']=self.sessions.current
                 self.last_hash = digest
                 self.observed[self.sequence] = (generation, time.time())
                 while len(self.observed) > 32:
@@ -204,6 +218,16 @@ class Engine:
                 return None
             return dict(obs)
 
+    def desktop_info(self):
+        with self.lock:
+            if not self.enabled:raise ValueError('陪看已暂停，不能读取程序信息')
+            generation=self.generation
+        from .desktop_info import collect_desktop
+        info=collect_desktop()
+        with self.lock:
+            if not self.enabled or self.generation!=generation:raise ValueError('陪看状态已改变')
+            return info
+
     def publish_reply(self, text, observation_id, session=None, generation=None):
         with self.lock:
             if session is not None and (session != self.session or generation != self.generation):
@@ -219,17 +243,72 @@ class Engine:
                         skip_unchanged=self.config["skip_unchanged"], monitor_bbox=self.config["monitor_bbox"],
                         error=self.error, sequence=self.sequence, reply=self.reply,
                         companion=dict(self.pet_state), bridge=dict(self.bridge), voice=dict(self.voice_status),
-                        preferences={k: self.config[k] for k in ("pet_size", "activity", "reduced_motion", "bubbles", "voice_url", "voice_style", "pet_scheme", "pet_outfit", "render_fps", "input_passthrough")},
+                        preferences={k: self.config[k] for k in ("pet_size", "activity", "reduced_motion", "bubbles", "voice_url", "voice_style", "pet_scheme", "pet_outfit", "render_fps", "input_passthrough","pet_avoid_center")},
                         voice_configured=bool(self.config["voice_key"]),
                         observation_time=self.observation["captured_at"] if self.latest() else None,
-                        has_observation=self.latest() is not None)
+                        has_observation=self.latest() is not None,episode_id=self.sessions.current,session_started=self.sessions.started)
+
+    def submit_chat(self,text,initiative=False,generation=None):
+        if not isinstance(text,str) or not 1<=len(text.strip())<=2000:raise ValueError('消息须为1至2000字')
+        with self.lock:
+            if initiative and (not self.enabled or generation != self.generation):raise ValueError('陪看已暂停或画面已变更')
+            if len(self.chat_jobs)>=16:raise ValueError('消息队列已满')
+            job=dict(id=secrets.token_hex(12),text=text.strip(),session=self.session,at=time.time(),initiative=bool(initiative),generation=self.generation,episode_id=self.sessions.current)
+            self.chat_jobs.append(job);self.chat_receipts[job['id']]='queued'
+            self.chat_contexts[job['id']]=job
+            while len(self.chat_receipts)>64:
+                old=next(iter(self.chat_receipts));self.chat_receipts.pop(old);self.chat_contexts.pop(old,None)
+            return job['id']
+
+    def take_chat(self):
+        with self.lock:
+            while self.chat_jobs:
+                job=self.chat_jobs.popleft()
+                if job['initiative'] and (not self.enabled or job['generation']!=self.generation or time.time()-job['at']>90):
+                    self.chat_receipts[job['id']]='cancelled'
+                    continue
+                self.chat_receipts[job['id']]='dispatched'
+                return job
+            return None
+
+    def desktop_reply(self,text,session,job_id):
+        with self.lock:
+            if session!=self.session or job_id not in self.chat_receipts:raise ValueError('桌面对话已失效')
+            job=self.chat_contexts[job_id]
+            if job['initiative'] and (not self.enabled or job['generation']!=self.generation or time.time()-job['at']>90):
+                self.chat_receipts[job_id]='cancelled'
+                raise ValueError('主动接话已取消')
+            if not isinstance(text,str) or not text.strip() or len(text)>6000:raise ValueError('回复内容无效')
+            self.reply=dict(text=text,at=time.time(),job_id=job_id)
+            self.chat_receipts[job_id]='replied'
 
     def pet_action(self, pose):
         from .coopanion import ACTIONS
         if pose not in ACTIONS:
             raise ValueError("未知动作")
+        return self.queue_pet('action',pose=pose)
+
+    def queue_pet(self,kind,**payload):
         with self.lock:
-            self.pet_commands.append(pose)
+            if not self.enabled:raise ValueError('陪看暂停，桌宠隐藏')
+            if len(self.pet_commands)>=16:raise ValueError('动作队列已满')
+            command=self.pet_feedback.create(kind,**payload)
+            self.pet_commands.append(command)
+            return command['id']
+
+    def pet_move(self,target,x=None,y=None,app='',side='right'):
+        from .pet_commands import validate_move
+        validate_move(target,x,y,app,side)
+        return self.queue_pet('move',target=target,x=x,y=y,app=app,side=side)
+
+    def cached_voice(self,ident,generation):
+        from .voice_bank import audio_path
+        audio_path(self.root,ident)
+        with self.lock:
+            if not self.enabled or generation!=self.generation:raise ValueError('陪看已暂停或切换')
+            if time.monotonic()-self.last_cached_voice<900:raise ValueError('预存语音冷却中')
+            self.last_cached_voice=time.monotonic()
+            self.voice_commands.append({'cached':ident,'generation':generation})
 
     def run(self):
         while not self.stop_event.is_set():

@@ -19,6 +19,8 @@ class FeiyuVoice:
         self.envelope = []
         self.started = 0
         self.generating = False
+        self.playing_text = None
+        self.playing_key = None
 
     def stop(self):
         self.generation += 1
@@ -49,13 +51,35 @@ class FeiyuVoice:
         index = int((time.monotonic()-self.started)/.05)
         return self.envelope[index] if 0<=index<len(self.envelope) else 0.0
 
-    def say(self, text):
+    def say(self, text, key=None):
         self.stop()
         generation = self.generation
         self.generating = True
-        threading.Thread(target=self._work, args=(text, generation), daemon=True).start()
+        threading.Thread(target=self._work, args=(text, generation, key), daemon=True).start()
 
-    def _work(self, text, generation):
+    def play_cached(self,path):
+        # Presence clips never interrupt an actual reply or ongoing synthesis.
+        if self.speaking or self.generating:return
+        self.stop()
+        generation=self.generation
+        def play():
+            try:
+                audio=path.read_bytes()
+                if len(audio)>8*1024**2:raise ValueError('预存语音过大')
+                with wave.open(io.BytesIO(audio)) as wav:
+                    if wav.getcomptype()!='NONE':raise ValueError('需要PCM WAV')
+                    envelope=self.pcm_envelope(wav.readframes(wav.getnframes()),wav.getsampwidth(),wav.getnchannels(),wav.getframerate())
+                if generation!=self.generation:return
+                import winsound
+                self.envelope=envelope;self.started=time.monotonic();self.speaking=True
+                winsound.PlaySound(audio,winsound.SND_MEMORY)
+            except Exception as error:
+                if generation==self.generation:self.error=str(error)
+            finally:
+                if generation==self.generation:self.speaking=False
+        threading.Thread(target=play,daemon=True).start()
+
+    def _work(self, text, generation, key=None):
         config = dict(self.config)
         if not config.get("voice_key"):
             self.error = "本地声音服务尚未配置密钥"
@@ -99,6 +123,8 @@ class FeiyuVoice:
                         self.generating = False
                         self.envelope = envelope
                         self.started = time.monotonic()
+                        self.playing_text = text
+                        self.playing_key = key
                         winsound.PlaySound(bytes(audio), winsound.SND_MEMORY)
                     return
                 time.sleep(0.5)

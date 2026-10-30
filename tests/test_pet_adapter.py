@@ -25,6 +25,7 @@ def test_existing_pet_renderer(tmp_path, monkeypatch):
         assert pet.widget._model.phrase == "在这里陪你"
         assert pet.widget._pet.name == "xiaojing-chibi"
         assert len(pet.widget._pet.frames["idle"]) > 1
+        engine.set_enabled(True)
         engine.pet_action("love")
         pet.refresh()
         assert engine.pet_state["pose"] == "love"

@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>小鲸的小窝 · Screenmate</title>
+    <link rel="icon" type="image/png" href="/coopanion/whale/thumbs/deepseek.png" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
@@ -23,14 +24,14 @@
             id="pair-token"
             type="password"
             autocomplete="off"
-            placeholder="右键桌宠 → 复制配对码"
+            placeholder="右键托盘图标 → 复制配对码"
             required
           /><button class="button primary" type="submit">
             进入小窝 <span>→</span>
           </button>
         </form>
         <p class="fine">
-          从桌宠双击打开时会自动连接。浏览器连接需要配对码，配对码仅保留在当前页面内存。
+          从托盘打开小窝会自动连接。浏览器入口需要配对码，仅保留在当前页面内存。
         </p>
         <p id="pair-error" role="alert"></p>
       </div>
@@ -38,38 +39,39 @@
     <div id="app" class="shell" hidden>
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">鲸</div>
+          <div class="brand-mark"><img src="/coopanion/whale/thumbs/deepseek.png" alt=""></div>
           <div><strong>小鲸的小窝</strong><small>SCREENMATE</small></div>
         </div>
         <nav aria-label="主要设置">
           <button class="nav-item active" data-page="watch">
-            <i data-icon="eye"></i><span>一起看屏幕</span></button
+            <i data-icon="eye"></i><span>陪看与聊天</span></button
           ><button class="nav-item" data-page="companion">
-            <i data-icon="heart"></i><span>桌面上的小鲸</span></button
+            <i data-icon="heart"></i><span>动作与位置</span></button
           ><button class="nav-item" data-page="voice">
-            <i data-icon="sound"></i><span>小鲸的声音</span></button
+            <i data-icon="sound"></i><span>声音与语音库</span></button
+          ><button class="nav-item" data-page="sessions"><i data-icon="text"></i><span>陪看记录</span></button
           ><button class="nav-item" data-page="connect">
             <i data-icon="link"></i><span>连接与配对</span>
           </button>
         </nav>
         <div class="sidebar-bottom">
           <span class="version-dot"></span
-          ><span>小鲸 Screenmate<small>v0.3 · Living Companion</small></span>
+          ><span>小鲸 Screenmate<small>桌面陪伴 · 本机连接</small></span>
         </div>
       </aside>
       <main>
         <header class="topbar">
           <div>
             <span class="breadcrumb">小鲸的小窝</span
-            ><span class="slash">/</span><span id="page-title">一起看屏幕</span>
+            ><span class="slash">/</span><span id="page-title">陪看与聊天</span>
           </div>
           <span class="status-pill" id="watch-state"><b></b>观看已暂停</span>
         </header>
         <section class="page" id="page-watch">
           <div class="hero">
             <div class="hero-copy">
-              <span class="eyebrow">A LITTLE COMPANY, EVERY DAY</span>
-              <h1>今天，也陪你一起。</h1>
+              <span class="eyebrow">XIAOJING / DESKTOP COMPANION</span>
+              <h1>一起看点什么？</h1>
               <p>
                 看网页、找线索，或是打一场游戏。<br />把小鲸放在桌面，按你的节奏一起看。
               </p>
@@ -78,9 +80,7 @@
                   <i data-icon="play"></i><span>开启持续陪看</span></button
                 ><span id="hero-state">现在先安静陪着你</span>
               </div>
-              <div class="hero-note">
-                <span class="tiny-dot"></span>观察频率由你决定，随时可以暂停
-              </div>
+              <div class="hero-note"><span class="tiny-dot"></span>开启才显示桌宠并采集内容，暂停后仍可聊天</div>
             </div>
             <div class="hero-companion">
               <span class="orbit orbit-one"></span
@@ -114,6 +114,19 @@
               ><span>本地声音<small id="voice-state">尚未配置</small></span>
             </div>
           </div>
+          <div class="session-overview">
+            <div><small>本场陪看</small><strong id="session-elapsed">尚未开始</strong></div>
+            <div><small>本地采集</small><strong id="sampling-rate">15 秒 / 次</strong></div>
+            <div><small>云端识图最短间隔</small><strong id="vision-rate">等待平板状态</strong></div>
+            <div><small>主动判断</small><strong id="initiative-rate">等待平板状态</strong></div>
+          </div>
+          <section class="desktop-chat-panel" aria-label="桌面聊天">
+              <h2>和小鲸说话</h2>
+              <p>沿用小鲸人格和原记忆，陪看过程按场次独立记录。暂停时也能聊天，不会因此开启截图。</p>
+              <textarea id="desktop-chat" maxlength="2000" rows="3" placeholder="想和小鲸说什么？"></textarea>
+              <button class="button primary" id="send-desktop-chat">发送给小鲸</button>
+              <p id="desktop-chat-state" role="status">也可以双击桌宠，使用旁边的小输入框。</p>
+          </section>
           <div class="section-heading">
             <div>
               <h2>她怎么看你的屏幕</h2>
@@ -245,7 +258,7 @@
               ></iframe>
               <div class="stage-ground"></div>
               <strong id="stage-pose">待机</strong>
-              <p>轻点互动 · 双击打开小窝 · 滚轮调节大小</p>
+              <p>这里是模型预览 · 桌宠双击打开聊天 · 滚轮调节大小</p>
               <div class="interaction-row">
                 <button class="button secondary small" data-pose="love">
                   摸摸头</button
@@ -255,7 +268,7 @@
                   打招呼
                 </button>
               </div>
-              <small class="fine">这些是本地动作，不会调用聊天模型。</small>
+              <small class="fine">预览不需要开启陪看，也不调用聊天模型。</small>
             </section>
             <section class="card appearance-settings">
               <h2>让她用舒服的方式陪你</h2>
@@ -292,18 +305,38 @@
               <label class="field-label" for="pet-outfit">服装</label><select id="pet-outfit"><option value="maid">女仆装</option><option value="cape">冬装斗篷</option><option value="crew">店员装</option></select>
               <label class="field-label" for="render-fps">动画帧率</label><select id="render-fps"><option value="30">30 FPS · 均衡</option><option value="60">60 FPS · 流畅</option></select>
               <label class="switch-row"><span>透明区域鼠标穿透<small>只有角色和气泡接收点击</small></span><input id="input-passthrough" type="checkbox" role="switch"><span class="switch-track"></span></label>
+              <label class="switch-row"><span>避开屏幕中心<small>人物和气泡靠边，跨侧从底边绕行；开启时不自由漫游</small></span><input id="avoid-center" type="checkbox" role="switch"><span class="switch-track"></span></label>
               <div id="renderer-warning" class="error-banner" role="status" hidden></div>
               <button id="save-appearance" class="button primary">
                 保存陪伴偏好
               </button>
             </section>
           </div>
+          <section class="card move-card">
+            <div class="card-heading"><h2>让小鲸待在哪里</h2><span id="pet-visibility" class="tag">桌宠已隐藏</span></div>
+            <p class="fine">实际移动需要开启陪看。中心保护会优先调整不安全位置，以执行回执为准。</p>
+            <div class="move-layout">
+              <div class="position-pad" aria-label="屏幕位置">
+                <button data-target="top_left">↖ 左上</button><button data-target="top">↑ 上方</button><button data-target="top_right">右上 ↗</button>
+                <button data-target="left">← 左侧</button><span>中心保护</span><button data-target="right">右侧 →</button>
+                <button data-target="bottom_left">↙ 左下</button><button data-target="bottom">↓ 下方</button><button data-target="bottom_right">右下 ↘</button>
+              </div>
+              <div class="move-fields">
+                <label for="move-app">靠近程序窗口</label>
+                <div class="inline-field"><input id="move-app" placeholder="例如 chrome.exe"><select id="move-side" aria-label="窗口哪一侧"><option value="right">右边</option><option value="left">左边</option><option value="above">上方</option><option value="below">下方</option></select></div>
+                <button id="move-to-app" class="button secondary small">移动到窗口旁</button>
+                <small class="fine">只支持同一显示器；多个同名窗口无法确定时不会移动。</small>
+                <div id="pet-command-state" class="soft-note" role="status">还没有动作请求。排队和开始执行均不代表完成。</div>
+              </div>
+            </div>
+          </section>
           <div class="section-heading">
             <div>
               <h2>看看她的小表情</h2>
-              <p>点一下，桌面上的小鲸也会做这个动作。</p>
+              <p>先在设置里看看，喜欢的话再让桌面上的小鲸做。</p>
             </div>
           </div>
+          <label class="preview-choice"><input id="preview-only" type="checkbox" checked> 仅在本页预览，不驱动桌宠</label>
           <div class="pose-grid" id="pose-grid"></div>
           <p class="fine attribution">
             动态模型与行为：Pal-AI-Lab / Coopanion · 保留上游许可及素材声明
@@ -313,7 +346,9 @@
           <div class="page-heading">
             <span class="eyebrow">A FAMILIAR VOICE, RIGHT HERE</span>
             <h1>听见小鲸的声音</h1>
-            <p>连接电脑上的 Feiyu，让她用熟悉的声线说话。</p>
+            <p>管理小鲸的声音，试听预存的场景反应。</p>
+            <button id="toggle-tts" class="button primary">开启语音</button>
+            <p id="tts-state">语音已关闭；陪看和文字聊天仍然可用。加载约需3分钟。</p>
           </div>
           <div class="two-columns">
             <section class="card voice-card">
@@ -341,7 +376,7 @@
                 ><button id="test-voice" class="button secondary">
                   检测服务
                 </button>
-                <button id="preview-voice" class="button secondary">试听当前声线</button>
+                <button id="preview-voice" class="button secondary">合成试听（会生成）</button>
               </div>
               <div id="voice-result" class="soft-note">
                 <i data-icon="info"></i
@@ -362,6 +397,17 @@
               </div>
             </section>
           </div>
+          <section class="card bank-section">
+            <div class="card-heading"><div><h2>预存的小反应</h2><p class="fine">直接播放电脑文件，不重新合成。自动选择需要画面符合场景，默认保持安静。</p></div><span class="tag" id="bank-count">读取中</span></div>
+            <div class="bank-toolbar"><input id="bank-search" placeholder="搜索台词或场景…" aria-label="搜索语音"><select id="bank-filter" aria-label="语音类型"><option value="auto">场景自动语音</option><option value="all">全部语音</option><option value="manual">仅供手动试听</option></select><button id="stop-voice" class="button secondary small">停止播放</button></div>
+            <p class="fine" id="bank-status" role="status">每15分钟最多一段，不打断正在合成或播放的回复。</p>
+            <div id="voice-bank" class="voice-bank"></div>
+          </section>
+        </section>
+        <section class="page" id="page-sessions" hidden>
+          <div class="page-heading"><span class="eyebrow">TIME TOGETHER</span><h1>一起看过的片刻</h1><p>过程独立保存。结束后，小鲸只将一份带时间的总结留进原私聊记忆。</p></div>
+          <div class="card-heading"><p class="fine">按香港时间显示 · 最近20场</p><button id="refresh-sessions" class="button secondary small">刷新记录</button></div>
+          <div id="session-list" class="session-list" aria-live="polite"><div class="empty-state">还没有读取记录</div></div>
         </section>
         <section class="page" id="page-connect" hidden>
           <div class="page-heading">
@@ -406,19 +452,20 @@
               <div class="soft-note">
                 <i data-icon="info"></i
                 ><span
-                  >平板连接时需要电脑的局域网地址，并让服务监听局域网。当前页面不会擅自修改网络设置。</span
+                  >已连接的平板通过 USB 回环隧道访问这个地址，不需要开放局域网端口。重新插线后需恢复 ADB reverse。</span
                 >
               </div>
             </section>
             <section class="card">
               <h2>浏览器文字入口</h2>
+              <button id="download-extension" class="button secondary small">获取扩展压缩包</button>
               <p class="body-copy">
                 加载项目里的
                 browser-extension，打开要陪看的页面，在扩展里填写配对码并开启当前页。
               </p>
               <ol class="steps">
-                <li><b>1</b><span>Chrome / Edge → 扩展管理</span></li>
-                <li><b>2</b><span>加载已解压扩展 → browser-extension</span></li>
+                <li><b>1</b><span>下载并解压，再打开Chrome / Edge扩展管理</span></li>
+                <li><b>2</b><span>开启开发者模式 → 加载已解压的扩展程序</span></li>
                 <li><b>3</b><span>在当前页开启，电脑端选择“读文字”</span></li>
               </ol>
               <p class="fine">
@@ -429,7 +476,7 @@
           <section class="card connection-boundary">
             <i data-icon="info"></i>
             <p>
-              当前版本在主人正常私聊时加入桌面观察，并把实际回复带回桌面。自主接话、桌面输入送入原会话和本地声音模型部署仍在后续集成范围。
+              已接通桌面聊天、独立陪看记录、主动接话、桌宠动作和本地声音。电脑与平板通过USB回环隧道连接；不在这里展示或复制你的私人记忆、账号凭据与密钥。
             </p>
           </section>
         </section>

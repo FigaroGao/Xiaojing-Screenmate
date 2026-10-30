@@ -14,13 +14,20 @@ def load_plugin(monkeypatch):
     event = types.ModuleType("astrbot.api.event")
     event.AstrMessageEvent = object
     event.filter = types.SimpleNamespace(on_llm_request=lambda **kw: lambda f: f,
-                                        on_llm_response=lambda **kw: lambda f: f)
+                                        on_llm_response=lambda **kw: lambda f: f,
+                                        llm_tool=lambda **kw: lambda f: f)
     star = types.ModuleType("astrbot.api.star")
     class Star:
         def __init__(self, context):
             self.context = context
     star.Star, star.Context = Star, object
     star.register = lambda *args: lambda cls: cls
+    message=types.ModuleType('astrbot.core.agent.message')
+    class TextPart:
+        def __init__(self,*,text):self.text=text
+        def mark_as_temp(self):return self
+    message.TextPart=TextPart
+    monkeypatch.setitem(sys.modules,'astrbot.core.agent.message',message)
     for key, module in {"astrbot": types.ModuleType("astrbot"), "astrbot.api": api,
                          "astrbot.api.event": event, "astrbot.api.star": star}.items():
         monkeypatch.setitem(sys.modules, key, module)
@@ -47,7 +54,7 @@ def test_plugin_owner_isolation_and_pause_generation(monkeypatch):
         await plugin.attach_observation(event("owner", "group"), req)
         assert req.prompt == "hello"
         await plugin.attach_observation(event("owner", ""), req)
-        assert "线索" in req.prompt
+        assert any('线索' in part.text for part in req.extra_user_content_parts)
         plugin.latest["generation"] = 1
         req.prompt = "hello"
         await plugin.attach_observation(event("owner", ""), req)
@@ -55,6 +62,64 @@ def test_plugin_owner_isolation_and_pause_generation(monkeypatch):
         await plugin.terminate()
     asyncio.run(run())
 
+
+def test_initiative_can_choose_cached_audio_without_creating_chat(monkeypatch):
+    Plugin=load_plugin(monkeypatch)
+    async def run():
+        async def judge(*args,**kw):return types.SimpleNamespace(completion_text='voice:here')
+        cap=types.SimpleNamespace(config={},bounded_generate=judge)
+        context=types.SimpleNamespace(get_registered_star=lambda _:types.SimpleNamespace(star_cls=cap))
+        p=Plugin(context,dict(initiative_enabled=True,initiative_seconds=900))
+        p.last_initiative=p.last_owner=0
+        p.latest={'text':'轻松的桌面','captured_at':__import__('time').time(),'generation':7}
+        calls=[]
+        async def request(method,path,**kwargs):
+            calls.append((method,path,kwargs))
+            return {'phrases':[{'id':'here','text':'测试自动语音','automatic':True}]}
+        p.request=request
+        await p.consider_speaking()
+        assert calls[-1][1]=='/v1/voice/cached'
+        assert calls[-1][2]['json']=={'id':'here','generation':7}
+        assert not any(path=='/v1/chat' for _,path,_ in calls)
+        await p.terminate()
+    asyncio.run(run())
+
+def test_live_status_distinguishes_pause_and_disconnect(monkeypatch):
+    Plugin=load_plugin(monkeypatch)
+    async def run():
+        p=Plugin(None,dict(enabled=True,owner_id='owner'))
+        async def paused(*args,**kw):return {'enabled':False,'has_observation':False}
+        p.request=paused
+        s=await p.get_desktop_status()
+        assert s['connected'] and s['watching'] is False
+        async def failed(*args,**kw):raise ConnectionError()
+        p.request=failed
+        s=await p.get_desktop_status()
+        assert not s['connected'] and s['watching'] is None
+        await p.terminate()
+    asyncio.run(run())
+
+def test_pet_tool_owner_isolation_and_queue_receipt(monkeypatch):
+    Plugin=load_plugin(monkeypatch)
+    async def run():
+        p=Plugin(None,dict(enabled=True,owner_id='owner'))
+        calls=[]
+        async def request(method,path,**kwargs):
+            calls.append(path)
+            if path=='/v1/status':return {'enabled':True,'companion':{'ready':True,'visible':True}}
+            if path=='/v1/pet/action':return {'id':'a'*24,'state':'queued'}
+            return {'id':'a'*24,'state':'completed'}
+        p.request=request
+        other=types.SimpleNamespace(get_sender_id=lambda:'other',get_group_id=lambda:'')
+        owner=types.SimpleNamespace(get_sender_id=lambda:'owner',get_group_id=lambda:'')
+        import json
+        assert not json.loads(await p.screenmate_pet(other,'play','wave'))['ok']
+        assert not calls
+        assert json.loads(await p.screenmate_pet(owner,'play','wave'))['state']=='completed'
+        assert calls==['/v1/status','/v1/pet/action','/v1/pet/commands/'+'a'*24]
+        assert not json.loads(await p.screenmate_pet(owner,'play','wave'))['ok']
+        await p.terminate()
+    asyncio.run(run())
 
 def test_voice_uses_real_feiyu_job_contract(monkeypatch):
     from screenmate.voice import FeiyuVoice

@@ -24,7 +24,7 @@ def test_capture_does_not_write_screenshot(engine):
     engine.set_enabled(True)
     engine.sample()
     assert engine.latest()["image_base64"]
-    assert list(engine.root.iterdir()) == [engine.path]
+    assert set(engine.root.iterdir()) == {engine.path,engine.sessions.path}
 
 
 def test_pause_erases_frame_and_rejects_reply(engine):

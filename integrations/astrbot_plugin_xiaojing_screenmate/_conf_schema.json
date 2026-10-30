@@ -1,8 +1,13 @@
 {
  "enabled":{"description":"启用桌面连接","type":"bool","default":false},
- "base_url":{"description":"电脑 Screenmate 地址（同机可用回环地址，平板需电脑局域网地址）","type":"string","default":"http://127.0.0.1:17860"},
+ "base_url":{"description":"电脑 Screenmate 地址；USB ADB reverse 连接平板时沿用回环地址","type":"string","default":"http://127.0.0.1:17860"},
  "token":{"description":"电脑端配对码，请勿公开","type":"string","default":""},
  "owner_id":{"description":"仅允许这个 QQ 用户的私聊获得屏幕内容","type":"string","default":""},
  "vision_provider_id":{"description":"已在 AstrBot 配置的视觉模型提供商 ID；文字模式无需填写","type":"string","default":""},
- "poll_seconds":{"description":"拉取最新观察间隔秒；实际采集频率在电脑端设置","type":"int","default":2}
+ "poll_seconds":{"description":"拉取最新观察间隔秒；实际采集频率在电脑端设置","type":"int","default":2},
+ "owner_session":{"description":"已核验的主人QQ私聊UMO，桌面输入复用该会话","type":"string","default":""},
+ "bot_id":{"description":"QQ机器人自身ID","type":"string","default":""},
+ "vision_min_seconds":{"description":"两次视觉调用至少间隔秒，与本地采集独立","type":"int","default":60},
+ "initiative_enabled":{"description":"根据实际观察低频判断是否主动接话；需主人开启陪看","type":"bool","default":false},
+ "initiative_seconds":{"description":"主动判断间隔秒，最低300","type":"int","default":900}
 }
